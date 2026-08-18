@@ -133,3 +133,45 @@ class SchemaTest(unittest.TestCase):
         open_db(path).close()
         mode = stat.S_IMODE(os.stat(path).st_mode)
         self.assertEqual(mode & 0o077, 0, f"mode {mode:o} is readable by others")
+
+
+class PortabilityTest(unittest.TestCase):
+    """The stages after conversion must run on any ordinary machine."""
+
+    def test_no_third_party_imports(self):
+        import ast
+        import sys
+        from pathlib import Path as P
+
+        stdlib = set(sys.stdlib_module_names)
+        package = P(__file__).resolve().parents[1] / "wpx"
+        for source in sorted(package.glob("*.py")):
+            tree = ast.parse(source.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    roots = [a.name.split(".")[0] for a in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    roots = [] if node.level else [(node.module or "").split(".")[0]]
+                else:
+                    continue
+                for root in roots:
+                    self.assertIn(root, stdlib | {"wpx", "__future__"},
+                                  f"{source.name} imports {root}")
+
+    def test_an_old_sqlite_is_reported_clearly(self):
+        from wpx.db import check_sqlite
+
+        check_sqlite((3, 45, 1))          # current: no complaint
+        with self.assertRaises(RuntimeError) as caught:
+            check_sqlite((3, 22, 0))      # pre-UPSERT
+        self.assertIn("3.24", str(caught.exception))
+
+    def test_no_sql_needs_a_recent_sqlite(self):
+        # RETURNING would need SQLite 3.35 (2021) — newer than some Pythons ship.
+        from pathlib import Path as P
+
+        package = P(__file__).resolve().parents[1] / "wpx"
+        for source in sorted(package.glob("*.py")):
+            for line in source.read_text(encoding="utf-8").splitlines():
+                if "RETURNING" in line and not line.strip().startswith("#"):
+                    self.fail(f"{source.name}: {line.strip()}")

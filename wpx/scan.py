@@ -108,14 +108,17 @@ def scan_corpus(con, root, echo=print) -> dict:
             continue
         para_count = len(doc.paragraphs())
         flags = ",".join(sorted(doc.features()))
-        cur = con.execute(
+        # Deliberately not "... RETURNING id": that needs SQLite 3.35 (2021),
+        # which a Python older than 3.11 may not ship on the firm's machine.
+        full_path = str(path.resolve())
+        con.execute(
             "INSERT INTO docs(path, name, sha256, para_count, flags, scanned_at) "
             "VALUES (?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET sha256=excluded.sha256, "
             "para_count=excluded.para_count, flags=excluded.flags, "
-            "scanned_at=excluded.scanned_at RETURNING id",
-            (str(path.resolve()), path.name, sha256_file(path), para_count, flags, now()),
+            "scanned_at=excluded.scanned_at",
+            (full_path, path.name, sha256_file(path), para_count, flags, now()),
         )
-        doc_id = cur.fetchone()[0]
+        doc_id = con.execute("SELECT id FROM docs WHERE path=?", (full_path,)).fetchone()[0]
         con.execute("DELETE FROM hits WHERE doc_id=?", (doc_id,))
         con.executemany(
             "INSERT INTO hits(doc_id, part, pidx, span_start, span_end, value, "

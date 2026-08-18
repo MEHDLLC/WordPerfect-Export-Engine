@@ -20,6 +20,26 @@ cost the most time were:
 The job queue is resumable and every attempt is logged, because a batch of
 thousands of files will not run clean the first time.
 
+Nothing else in the pipeline touches WordPerfect. Once a `.docx` exists, every
+later stage reads and writes it as a zip of XML, so the conversion machine is
+needed exactly once and the rest of the work runs anywhere Python does.
+
+## Portability
+
+The `wpx` package is standard library only, deliberately: a small firm should
+not have to get a pip install past its IT policy to open its own letters, and
+the tool has to keep working on whichever Python is already on the machine.
+Practical floors:
+
+* **Python 3.9.** The syntax used goes down to 3.8, but 3.9 is the oldest
+  version worth telling anyone to install.
+* **SQLite 3.24** for UPSERT, which every Python since 3.8 ships. `open_db`
+  checks this and says so plainly rather than failing with a SQL syntax error
+  halfway through a scan. `RETURNING` is avoided for the same reason — it needs
+  SQLite 3.35, newer than some Python builds carry, and a test keeps it out.
+* **No network, no Word, no WordPerfect** for stages 2-8; a test asserts the
+  import list stays inside the standard library.
+
 ## Stage 2 — detection
 
 Four passes run over each letter, in descending order of trust. Later passes

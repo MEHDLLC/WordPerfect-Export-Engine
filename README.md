@@ -4,8 +4,27 @@ Tooling for a law firm moving off WordPerfect: convert the back catalogue to
 Word, turn the converted letters into a small library of forms, and generate a
 matter's whole packet from one set of facts typed once.
 
-The conversion stage needs Windows and a licensed WordPerfect 2021. Everything
-after it is pure Python standard library and runs anywhere.
+## What runs where
+
+Only the first stage needs WordPerfect. Everything after it works on any
+machine with Python — Windows, macOS or Linux, with or without WordPerfect,
+with or without Word installed.
+
+| | Needs | Runs on |
+|---|---|---|
+| `wpd_convert.py` (.wpd → .docx) | Windows, licensed WordPerfect 2021, `pip install pywin32 psutil` | the one conversion machine |
+| `python3 -m wpx` (everything else) | Python 3.9+ and nothing else | any machine |
+
+The `wpx` package imports only the standard library — no pip install, no Word,
+no WordPerfect, no network. A test enforces that, and the whole test suite plus
+the full pipeline run on Linux boxes with neither program installed. Reading
+and writing `.docx` is done directly against the zip and its XML, which is why
+Word is not needed to produce Word files.
+
+In practice that means the conversion is a one-time job on the WordPerfect
+machine, and the day-to-day work — templates, contacts, intake, generating a
+matter's packet — happens wherever the firm prefers. Move the `Converted`
+folder and the `.db` file and everything continues where it left off.
 
 ## The pipeline
 

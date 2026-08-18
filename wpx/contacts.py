@@ -82,15 +82,20 @@ def build(con, echo=print) -> dict:
     counts = Counter()
     for (role_name, slug), entity in sorted(observations.items()):
         display = entity["names"].most_common(1)[0][0]
+        # Corpus contacts were just deleted, so anything still holding this
+        # slug was edited by hand and stays as it is.
+        existing = con.execute(
+            "SELECT id FROM contacts WHERE role=? AND slug=?", (role_name, slug)
+        ).fetchone()
+        if existing is not None:
+            counts["kept-manual"] += 1
+            continue
         cur = con.execute(
             "INSERT INTO contacts(role, slug, name, doc_count, source, updated_at) "
-            "VALUES (?,?,?,?,'corpus',?) ON CONFLICT(role, slug) DO NOTHING RETURNING id",
+            "VALUES (?,?,?,?,'corpus',?)",
             (role_name, slug, display, len(entity["docs"]), now()),
-        ).fetchone()
-        if cur is None:
-            counts["kept-manual"] += 1
-            continue  # a manual contact owns this slug; do not overwrite it
-        contact_id = cur[0]
+        )
+        contact_id = cur.lastrowid
         counts[role_name] += 1
         for field_key, tally in entity["values"].items():
             ranked = tally.most_common()

@@ -167,7 +167,25 @@ def in_git_worktree(path) -> Path | None:
     return None
 
 
+# UPSERT ("ON CONFLICT ... DO UPDATE") arrived in SQLite 3.24, June 2018.
+# Every Python from 3.8 onwards ships something newer, but an old embedded
+# build would otherwise fail with a bare syntax error deep inside a scan.
+MIN_SQLITE = (3, 24, 0)
+
+
+def check_sqlite(version=None) -> None:
+    version = version or sqlite3.sqlite_version_info
+    if tuple(version[:3]) < MIN_SQLITE:
+        have = ".".join(str(n) for n in version[:3])
+        need = ".".join(str(n) for n in MIN_SQLITE)
+        raise RuntimeError(
+            f"this Python is built against SQLite {have}; wpx needs {need} or newer. "
+            "Install a current Python (3.9+) from python.org and re-run."
+        )
+
+
 def open_db(path) -> sqlite3.Connection:
+    check_sqlite()
     con = sqlite3.connect(str(path))
     con.execute("PRAGMA journal_mode=WAL;")
     con.execute("PRAGMA foreign_keys=ON;")
