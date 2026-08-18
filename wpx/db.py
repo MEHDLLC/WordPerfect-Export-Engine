@@ -9,8 +9,10 @@ at an existing firmconvert.db is safe.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS docs (
@@ -19,6 +21,7 @@ CREATE TABLE IF NOT EXISTS docs (
     name       TEXT NOT NULL,
     sha256     TEXT,
     para_count INTEGER,
+    flags      TEXT,          -- markup needing a human: tracked changes, field codes
     scanned_at TEXT
 );
 
@@ -95,10 +98,48 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# Columns added after the first release. Existing databases are upgraded in
+# place rather than rebuilt, because the conversion audit trail lives in them.
+MIGRATIONS = (
+    ("docs", "flags", "TEXT"),
+)
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    for table, column, decl in MIGRATIONS:
+        existing = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    con.commit()
+
+
+def protect(path) -> None:
+    """Keep the database readable only by its owner.
+
+    It holds client names, dates of birth, claim numbers and medical
+    providers. This is a floor, not a security model — see docs/PIPELINE.md.
+    """
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass  # Windows ACLs are managed by the file share, not by chmod
+
+
+def in_git_worktree(path) -> Path | None:
+    """The repository this file sits inside, if any — client data must not be
+    committed, and a database created next to the source tree easily is."""
+    for parent in Path(path).resolve().parents:
+        if (parent / ".git").exists():
+            return parent
+    return None
+
+
 def open_db(path) -> sqlite3.Connection:
     con = sqlite3.connect(str(path))
     con.execute("PRAGMA journal_mode=WAL;")
     con.execute("PRAGMA foreign_keys=ON;")
     con.executescript(SCHEMA)
+    _migrate(con)
+    protect(path)
     con.row_factory = sqlite3.Row
     return con

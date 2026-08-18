@@ -16,6 +16,7 @@ from pathlib import Path
 from . import fields as F
 from .db import now
 from .docxml import DocxFile
+from .values import derive, render_date
 
 MARK, BLANK, LEAVE, ERROR = "mark", "blank", "leave", "error"
 
@@ -38,17 +39,28 @@ def letter_date_today() -> str:
 
 
 def render(template_path, values: dict, dest, on_missing: str = MARK) -> RenderResult:
-    """Write a filled copy of template_path at dest."""
+    """Write a filled copy of template_path at dest.
+
+    Values are derived first, so storing client.name is enough to fill
+    {{client.first_name}} and {{client.last_name}} as well.
+    """
     template_path, dest = Path(template_path), Path(dest)
+    values = derive(values)
     doc = DocxFile(template_path)
     result = RenderResult(template=template_path.name, path=str(dest))
     missing: set[str] = set()
 
     def substitute(match: re.Match) -> str | None:
-        key = match.group(1)
+        key, style = match.group(1), match.group(2)
         value = values.get(key)
         if value not in (None, ""):
             result.filled += 1
+            if style:
+                # A date the firm typed as 01/26/2026 prints as
+                # "January 26, 2026" wherever the original letter spelled it out.
+                respelled = render_date(str(value), style)
+                if respelled:
+                    return respelled
             return str(value)
         missing.add(key)
         if on_missing == ERROR:
@@ -82,6 +94,16 @@ def placeholders(template_path) -> set[str]:
     """The field keys a template asks for, read from the template itself."""
     doc = DocxFile(template_path)
     return {m.group(1) for p in doc.paragraphs() for m in F.PLACEHOLDER_RE.finditer(p.text)}
+
+
+def needed_fields(template_path) -> set[str]:
+    """The keys someone actually has to supply: derived ones are free."""
+    return {k for k in placeholders(template_path) if not _is_derived(k)}
+
+
+def _is_derived(key: str) -> bool:
+    field = F.BY_KEY.get(key)
+    return bool(field and field.derived)
 
 
 def _party_role(keys) -> str | None:

@@ -15,6 +15,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from wpx.minidocx import build  # noqa: E402
+from wpx.values import LONG, format_date, parse_date  # noqa: E402
+
+
+def long_date(short: str) -> str:
+    """'01/26/2026' -> 'January 26, 2026' — real letters mix both spellings."""
+    return format_date(parse_date(short), LONG)
 
 FIRM = [
     "NORTHSTAR INJURY LAW, LLC",
@@ -109,6 +115,9 @@ def lor(m, letter_date):
         f"Please confirm coverage and policy limits under policy {m['policy_no']} and forward a",
         f"copy of the declarations page. {m['client'].split()[0]} has not given, and will not give, a recorded",
         "statement without counsel present.",
+        "",
+        f"Our client was treated the same week as the collision of {long_date(m['dol'])},",
+        f"and Mr. {m['client'].split()[-1]} will forward the records as they arrive.",
         *SIGNATURE,
     ]
 

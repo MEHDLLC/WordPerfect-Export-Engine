@@ -20,6 +20,7 @@ import re
 from dataclasses import dataclass, asdict
 
 from . import fields as F
+from .values import SSN_RE, canonical, split_name
 
 MONEY_RE = re.compile(r"\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\b|\$\s?\d+(?:\.\d{2})?\b")
 DATE_RE = re.compile(
@@ -74,7 +75,8 @@ class Hit:
 
 
 def normalize_value(value: str) -> str:
-    return re.sub(r"\s+", " ", value).strip(" \t.,;:").casefold()
+    """One key per real-world value — see wpx/values.canonical."""
+    return canonical(value)
 
 
 def _clean(value: str) -> str:
@@ -149,18 +151,26 @@ def _name_variants(value: str, key: str) -> list[tuple[str, str, float]]:
     not client.name, so the generated letter reads correctly.
     """
     out: list[tuple[str, str, float]] = [(value, key, 0.85)]
-    tokens = [t for t in re.split(r"\s+", value) if t]
-    if len(tokens) < 2:
+    prefix = key.rsplit(".", 1)[0]
+    parts = split_name(value)
+    if not parts or prefix not in F.person_prefixes():
         return out
-    surname = tokens[-1].strip(".,")
-    if len(surname) >= 4 and surname.casefold() not in _COMMON_WORDS:
-        out.append((surname, key, 0.65))
-        for honorific in ("Mr.", "Ms.", "Mrs.", "Dr."):
-            out.append((f"{honorific} {surname}", key, 0.8))
-    first_key = key.rsplit(".", 1)[0] + ".first_name"
-    first = tokens[0].strip(".,")
-    if first_key in F.BY_KEY and len(first) >= 3 and first.casefold() not in _COMMON_WORDS:
-        out.append((first, first_key, 0.6))
+    # Only the surname itself is claimed, never the honorific in front of it:
+    # "Ms. Whitfield" becomes "Ms. {{client.last_name}}" and still reads as the
+    # firm wrote it, where {{client.name}} would expand to the full name.
+    for part, field_suffix, confidence in (
+        ("last_name", "last_name", 0.65),
+        ("first_name", "first_name", 0.6),
+    ):
+        token = parts.get(part, "")
+        target = f"{prefix}.{field_suffix}"
+        if (
+            target in F.BY_KEY
+            and len(token) >= 3
+            and token.casefold() not in _COMMON_WORDS
+            and token.casefold() != value.casefold()
+        ):
+            out.append((token, target, confidence))
     return out
 
 
@@ -209,19 +219,24 @@ def propagate(paragraphs, known: list[Hit]) -> list[Hit]:
     return hits
 
 
+# name, pattern, the field it proves (None = candidate for review only)
 _PATTERNS = (
-    ("money", MONEY_RE, F.MONEY),
-    ("date", DATE_RE, F.DATE),
-    ("phone", PHONE_RE, F.PHONE),
-    ("address", CSZ_RE, F.ADDRESS),
+    # An SSN-shaped string is an SSN. Naming it outright matters: an
+    # unrecognized one would be copied verbatim into a template and then sent
+    # out on every future client's letter.
+    ("ssn", SSN_RE, "client.ssn", 0.9),
+    ("money", MONEY_RE, None, 0.3),
+    ("date", DATE_RE, None, 0.3),
+    ("phone", PHONE_RE, None, 0.3),
+    ("address", CSZ_RE, None, 0.3),
 )
 
 
 def find_patterns(paragraphs) -> list[Hit]:
-    """Pass 4 — typed values with nothing naming them. Review fodder."""
+    """Pass 4 — typed values, mostly with nothing naming them. Review fodder."""
     hits: list[Hit] = []
     for para in paragraphs:
-        for name, pattern, _kind in _PATTERNS:
+        for name, pattern, field_key, confidence in _PATTERNS:
             for match in pattern.finditer(para.text):
                 hits.append(
                     Hit(
@@ -231,8 +246,8 @@ def find_patterns(paragraphs) -> list[Hit]:
                         end=match.end(),
                         value=match.group(0).strip(),
                         detector=f"pattern:{name}",
-                        confidence=0.3,
-                        field_key=None,
+                        confidence=confidence,
+                        field_key=field_key,
                     )
                 )
     return hits

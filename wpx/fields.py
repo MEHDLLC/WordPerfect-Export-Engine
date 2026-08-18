@@ -29,6 +29,7 @@ class Field:
     kind: str = TEXT
     aliases: tuple[str, ...] = ()   # labels seen in the documents themselves
     always_variable: bool = True    # False = usually firm boilerplate
+    derived: bool = False           # computed from another field, never asked for
     note: str = ""
 
     def matches_label(self, label: str) -> bool:
@@ -58,7 +59,10 @@ FIELDS: tuple[Field, ...] = (
     Field("client.name", "Client name", "client", NAME,
           aliases=("our client", "client", "claimant", "patient", "patient name",
                    "our insured", "insured", "re")),
-    Field("client.first_name", "Client first name", "client", NAME),
+    # Derived from client.name, so a letter that says "Dana" or "Ms. Whitfield"
+    # keeps saying that instead of expanding to the full name.
+    Field("client.first_name", "Client first name", "client", NAME, derived=True),
+    Field("client.last_name", "Client last name", "client", NAME, derived=True),
     Field("client.address", "Client street address", "client", ADDRESS),
     Field("client.city_state_zip", "Client city, state ZIP", "client", ADDRESS),
     Field("client.dob", "Client date of birth", "client", DATE,
@@ -96,9 +100,13 @@ FIELDS: tuple[Field, ...] = (
     Field("adjuster.name", "Adjuster", "insurer", NAME,
           aliases=("adjuster", "claims adjuster", "claim representative",
                    "claim rep", "claims representative", "adjustor")),
+    Field("adjuster.first_name", "Adjuster first name", "insurer", NAME, derived=True),
+    Field("adjuster.last_name", "Adjuster last name", "insurer", NAME, derived=True),
     Field("insured.name", "At-fault party / your insured", "insurer", NAME,
           aliases=("your insured", "at fault driver", "at fault party",
                    "tortfeasor", "defendant driver")),
+    Field("insured.first_name", "At-fault party first name", "insurer", NAME, derived=True),
+    Field("insured.last_name", "At-fault party last name", "insurer", NAME, derived=True),
 
     # --- medical providers (records and billing requests) -----------------
     Field("provider.name", "Provider name", "provider", NAME,
@@ -147,8 +155,16 @@ def groups() -> dict[str, list[Field]]:
     return out
 
 
-def placeholder(key: str) -> str:
-    return "{{" + key + "}}"
+def placeholder(key: str, style: str = "") -> str:
+    """{{client.name}}, or {{matter.date_of_loss:long}} for a date spelling."""
+    return "{{" + key + (f":{style}" if style else "") + "}}"
 
 
-PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*\}\}")
+# The optional ":style" suffix records how a date was written in the original
+# letter, so a template can reproduce that spelling from one stored value.
+PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)(?::([a-z]+))?\s*\}\}")
+
+
+def person_prefixes() -> set[str]:
+    """Field prefixes that name a person, i.e. where a surname makes sense."""
+    return {k[: -len(".last_name")] for k in BY_KEY if k.endswith(".last_name")}

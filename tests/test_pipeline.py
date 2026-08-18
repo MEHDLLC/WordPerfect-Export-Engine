@@ -149,6 +149,40 @@ class PipelineTest(unittest.TestCase):
         self.assertTrue(any("Valley Regional Medical Center" in n for n in names))
         self.assertTrue(any("Larkspur Chiropractic Clinic" in n for n in names))
 
+    def render_lor(self):
+        """One letter for a matter whose only name entry is the full name."""
+        matters.set_values(self.con, "2026-9003", {
+            "client.name": "Owen T. Marchetti",
+            "matter.date_of_loss": "3/6/2026",
+        })
+        return render.generate(
+            self.con, "2026-9003", self.templates, self.tmp / "Dates",
+            only=["L LOR Summit Mutual"], echo=None,
+        )
+
+    def test_one_date_fills_both_spellings_in_the_same_letter(self):
+        template = DocxFile(self.templates / "L LOR Summit Mutual.docx").text
+        self.assertIn("{{matter.date_of_loss:short}}", template)
+        self.assertIn("{{matter.date_of_loss:long}}", template)
+
+        results = self.render_lor()
+        text = DocxFile(results[0].path).text
+        self.assertIn("collision of 03/06/2026", text)
+        self.assertIn("collision of March 6, 2026", text)
+
+    def test_a_letter_keeps_saying_mr_surname(self):
+        # Not "Mr. Owen T. Marchetti", and not the client's full name either.
+        text = DocxFile(self.templates / "L LOR Summit Mutual.docx").text
+        self.assertIn("Mr. {{client.last_name}}", text)
+
+    def test_derived_name_parts_need_no_intake_entry(self):
+        results = self.render_lor()
+        text = DocxFile(results[0].path).text
+        self.assertIn("Mr. Marchetti will forward", text)
+        self.assertIn("Owen has not given", text)
+        self.assertNotIn("client.first_name", results[0].missing)
+        self.assertNotIn("client.last_name", results[0].missing)
+
     def test_a_missing_value_is_marked_not_silently_blank(self):
         matters.set_values(self.con, "2026-9002", {"client.name": "Casey Ito"})
         outdir = self.tmp / "Partial"

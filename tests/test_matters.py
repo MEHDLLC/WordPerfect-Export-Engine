@@ -71,12 +71,65 @@ class MatterStoreTest(unittest.TestCase):
         path.write_text('{"client": {"client.name": "Casey Ito"}}', encoding="utf-8")
         self.assertEqual(matters.load_file(path), {"client.name": "Casey Ito"})
 
-    def test_blank_intake_covers_every_field(self):
+    def test_blank_intake_covers_every_field_that_must_be_typed(self):
         from wpx import fields as F
 
         sheet = matters.flatten(matters.intake_blank())
-        self.assertEqual(set(sheet), set(F.BY_KEY))
+        self.assertEqual(set(sheet), {k for k, f in F.BY_KEY.items() if not f.derived})
+
+    def test_blank_intake_omits_derived_fields(self):
+        sheet = matters.flatten(matters.intake_blank())
+        self.assertNotIn("client.first_name", sheet)
+        self.assertNotIn("client.last_name", sheet)
+
+    def test_a_stored_full_name_supplies_its_parts(self):
+        from wpx.values import derive
+
+        matters.set_values(self.con, "A-1", {"client.name": "Dana R. Whitfield"})
+        supplied = derive(matters.values(self.con, "A-1"))
+        self.assertEqual(supplied["client.first_name"], "Dana")
+        self.assertEqual(supplied["client.last_name"], "Whitfield")
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SchemaTest(unittest.TestCase):
+    """A database written by an earlier version keeps its audit trail."""
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_an_older_docs_table_gains_the_flags_column(self):
+        import sqlite3
+
+        path = self.tmp / "old.db"
+        old = sqlite3.connect(path)
+        old.execute(
+            "CREATE TABLE docs (id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, "
+            "name TEXT NOT NULL, sha256 TEXT, para_count INTEGER, scanned_at TEXT)"
+        )
+        old.execute("INSERT INTO docs(path, name) VALUES ('/x/a.docx', 'a.docx')")
+        old.commit()
+        old.close()
+
+        con = open_db(path)
+        columns = {r[1] for r in con.execute("PRAGMA table_info(docs)")}
+        self.assertIn("flags", columns)
+        # the row that was already there survives the upgrade
+        self.assertEqual(con.execute("SELECT name FROM docs").fetchone()[0], "a.docx")
+        con.close()
+
+    def test_the_database_is_not_world_readable(self):
+        import os
+        import stat
+
+        path = self.tmp / "perm.db"
+        open_db(path).close()
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+        self.assertEqual(mode & 0o077, 0, f"mode {mode:o} is readable by others")

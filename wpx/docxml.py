@@ -226,6 +226,26 @@ class DocxFile:
                     except ET.ParseError:
                         pass  # unparseable part: copy it through unchanged
 
+    # Markup that changes what a reader sees but that this tool does not edit.
+    # A document carrying any of it needs a human to look at the template.
+    _FEATURES = {
+        "tracked-changes": (_w("ins"), _w("del")),
+        "field-codes": (_w("instrText"), _w("fldSimple")),
+        "content-controls": (_w("sdt"),),
+        "text-boxes": ("{http://schemas.microsoft.com/office/word/2010/wordprocessingShape}txbx",
+                       _w("txbxContent")),
+    }
+
+    def features(self) -> set[str]:
+        """Markup present in this document that the text passes step over."""
+        found = set()
+        for name, tags in self._FEATURES.items():
+            for root in self.parts.values():
+                if any(next(root.iter(tag), None) is not None for tag in tags):
+                    found.add(name)
+                    break
+        return found
+
     def paragraphs(self) -> list[Paragraph]:
         """Every paragraph in the document, in a stable order.
 

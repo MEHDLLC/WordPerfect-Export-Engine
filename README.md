@@ -89,6 +89,22 @@ facts every form draws from (client, matter, carrier, adjuster, provider,
 demand, firm). Adding a field is a one-line change in `wpx/fields.py`; the
 scanner, the templatizer and the intake sheet all read the same table.
 
+Two things are handled so that one entry really does cover every letter:
+
+* **Dates are stored once, spelled per letter.** Type `3/6/2026`; the Re: block
+  prints `03/06/2026` and the body prints `March 6, 2026`, because each
+  placeholder carries the spelling the original letter used
+  (`{{matter.date_of_loss:long}}`).
+* **Name parts are derived, not typed.** Storing `client.name` fills
+  `{{client.first_name}}` and `{{client.last_name}}`, so a letter that said
+  "Mr. Whitfield" or "Dana" keeps saying that instead of expanding to the full
+  name.
+
+Client data lives in the same SQLite file: it is created mode `0600`, every
+command warns if it sits inside a git checkout, and social security numbers are
+recognized by shape (so they become placeholders rather than being baked into a
+shared template) and masked in reports. See `docs/PIPELINE.md`.
+
 ## Tests
 
 ```bash

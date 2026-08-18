@@ -105,12 +105,13 @@ def scan_corpus(con, root, echo=print) -> dict:
                 echo(f"  !! {path.name}: {exc!r}")
             continue
         para_count = len(doc.paragraphs())
+        flags = ",".join(sorted(doc.features()))
         cur = con.execute(
-            "INSERT INTO docs(path, name, sha256, para_count, scanned_at) VALUES (?,?,?,?,?) "
-            "ON CONFLICT(path) DO UPDATE SET sha256=excluded.sha256, "
-            "para_count=excluded.para_count, scanned_at=excluded.scanned_at "
-            "RETURNING id",
-            (str(path.resolve()), path.name, sha256_file(path), para_count, now()),
+            "INSERT INTO docs(path, name, sha256, para_count, flags, scanned_at) "
+            "VALUES (?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET sha256=excluded.sha256, "
+            "para_count=excluded.para_count, flags=excluded.flags, "
+            "scanned_at=excluded.scanned_at RETURNING id",
+            (str(path.resolve()), path.name, sha256_file(path), para_count, flags, now()),
         )
         doc_id = cur.fetchone()[0]
         con.execute("DELETE FROM hits WHERE doc_id=?", (doc_id,))
@@ -130,6 +131,7 @@ def scan_corpus(con, root, echo=print) -> dict:
         totals["hits"] += len(hits)
         totals["named"] += named
         if echo:
-            echo(f"  {path.name}: {len(hits)} values, {named} mapped to fields")
+            note = f"  [{flags}]" if flags else ""
+            echo(f"  {path.name}: {len(hits)} values, {named} mapped to fields{note}")
     con.commit()
     return totals

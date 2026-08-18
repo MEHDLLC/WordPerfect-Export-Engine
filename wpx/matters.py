@@ -119,7 +119,9 @@ def missing_for(con, ref: str, names=None, scope: str = "", supplied=()) -> dict
     supplied names fields the generator fills in by itself (today's date, the
     firm's own details), so they are not reported as gaps.
     """
-    have = {k for k, v in values(con, ref, scope).items() if str(v).strip()}
+    from .values import derive
+
+    have = {k for k, v in derive(values(con, ref, scope)).items() if str(v).strip()}
     have |= {k for k, v in firm_defaults(con).items() if str(v).strip()}
     have |= set(supplied)
     return {
@@ -134,7 +136,8 @@ def intake_blank(keys=None) -> dict:
     sheet: dict = {}
     for group, group_fields in F.groups().items():
         section = {
-            f.key: "" for f in group_fields if wanted is None or f.key in wanted
+            f.key: "" for f in group_fields
+            if not f.derived and (wanted is None or f.key in wanted)
         }
         if section:
             sheet[group] = section

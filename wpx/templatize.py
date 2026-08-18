@@ -24,6 +24,7 @@ from .db import now
 from .detect import normalize_value
 from .docxml import DocxFile, ReplacementError
 from .scan import detect_document
+from .values import date_style, mask, parse_date
 
 DEFAULT_MIN_CONFIDENCE = 0.6
 
@@ -53,6 +54,19 @@ class TemplateResult:
             ],
             "left_in_place": self.left_in_place,
         }
+
+
+def _placeholder_for(hit) -> str:
+    """The placeholder to write for a hit, carrying a date's spelling with it.
+
+    The Re: block writes 01/26/2026 and the body writes January 26, 2026. Both
+    come from one stored date; the style suffix is how each keeps its own
+    spelling.
+    """
+    field = F.BY_KEY[hit.field_key]
+    if field.kind == F.DATE and parse_date(hit.value):
+        return F.placeholder(hit.field_key, date_style(hit.value))
+    return F.placeholder(hit.field_key)
 
 
 def _skip_reason(hit, kinds: dict, min_confidence: float, include_constants: bool):
@@ -103,7 +117,7 @@ def templatize(
         by_paragraph.setdefault(hit.pidx, []).append(hit)
 
     for pidx, para_hits in by_paragraph.items():
-        edits = [(h.start, h.end, F.placeholder(h.field_key)) for h in para_hits]
+        edits = [(h.start, h.end, _placeholder_for(h)) for h in para_hits]
         try:
             paragraphs[pidx].apply(edits)
         except ReplacementError as exc:
@@ -117,7 +131,7 @@ def templatize(
             result.replaced += 1
 
     result.left_in_place = [
-        {"reason": reason, "value": skipped_samples[(reason, norm)], "count": count}
+        {"reason": reason, "value": mask(skipped_samples[(reason, norm)]), "count": count}
         for (reason, norm), count in sorted(skipped.items(), key=lambda kv: -kv[1])
     ]
     doc.save(dest)

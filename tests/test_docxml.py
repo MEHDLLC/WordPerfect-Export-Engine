@@ -78,3 +78,55 @@ class DocxEditingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DocumentFeatureTest(unittest.TestCase):
+    """Markup this tool steps over has to be reported, not silently ignored."""
+
+    W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def make_raw(self, body: str, name="raw.docx") -> Path:
+        path = build(self.tmp / name, ["placeholder"])
+        document = (
+            f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f"<w:document {self.W}><w:body>{body}</w:body></w:document>"
+        )
+        data = {}
+        with zipfile.ZipFile(path) as zf:
+            for info in zf.infolist():
+                data[info.filename] = zf.read(info.filename)
+        data["word/document.xml"] = document.encode("utf-8")
+        with zipfile.ZipFile(path, "w") as zf:
+            for filename, blob in data.items():
+                zf.writestr(filename, blob)
+        return path
+
+    def test_reports_tracked_changes(self):
+        path = self.make_raw(
+            "<w:p><w:ins><w:r><w:t>inserted</w:t></w:r></w:ins></w:p>"
+        )
+        self.assertIn("tracked-changes", DocxFile(path).features())
+
+    def test_reports_field_codes(self):
+        path = self.make_raw(
+            "<w:p><w:r><w:instrText> DATE </w:instrText></w:r></w:p>"
+        )
+        self.assertIn("field-codes", DocxFile(path).features())
+
+    def test_field_code_text_is_not_treated_as_body_text(self):
+        path = self.make_raw(
+            "<w:p><w:r><w:t>Date: </w:t></w:r>"
+            "<w:r><w:instrText> DATE \\@ \"M/d/yyyy\" </w:instrText></w:r></w:p>"
+        )
+        self.assertEqual(DocxFile(path).text, "Date: ")
+
+    def test_a_plain_document_is_reported_clean(self):
+        path = build(self.tmp / "clean.docx", ["nothing unusual here"])
+        self.assertEqual(DocxFile(path).features(), set())

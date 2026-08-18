@@ -131,13 +131,27 @@ def field_summary(con) -> list[dict]:
     return out
 
 
+def flagged_documents(con) -> list[dict]:
+    """Documents carrying markup the text passes step over.
+
+    Tracked changes, field codes and content controls all put visible text
+    somewhere this tool does not edit, so a template built from such a
+    document has to be opened and checked by a person.
+    """
+    rows = con.execute(
+        "SELECT name, flags FROM docs WHERE COALESCE(flags, '') <> '' ORDER BY name"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def unmapped(con, limit: int = 50) -> list[dict]:
     """Values no detector could name — the human review queue.
 
     Every entry here is a value that would stay hard-coded in a template, so
     this list is the honest measure of how much of the corpus is really
-    automated. Unnamed values the roll-up judged to be boilerplate are left
-    out: they belong in the letter as they are.
+    automated. Two kinds of value are left out because they are not gaps: those
+    the roll-up judged to be boilerplate, and those another document in the
+    corpus already named — the templatizer resolves both without help.
     """
     rows = con.execute(
         "SELECT h.norm_value, MIN(h.value) AS sample, h.detector, "
@@ -145,7 +159,8 @@ def unmapped(con, limit: int = 50) -> list[dict]:
         "GROUP_CONCAT(DISTINCT d.name) AS in_docs "
         "FROM hits h JOIN docs d ON d.id = h.doc_id "
         "LEFT JOIN catalog c ON c.norm_value = h.norm_value "
-        "WHERE h.field_key IS NULL AND COALESCE(c.kind, ?) <> ? "
+        "WHERE h.field_key IS NULL AND c.field_key IS NULL "
+        "AND COALESCE(c.kind, ?) <> ? "
         "GROUP BY h.norm_value, h.detector "
         "ORDER BY docs DESC, hits DESC LIMIT ?",
         (UNKNOWN, CONSTANT, limit),

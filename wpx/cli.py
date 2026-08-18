@@ -21,12 +21,24 @@ import sys
 from pathlib import Path
 
 from . import __version__, catalog, fields as F, forms, matters, render, scan, templatize
-from .db import now, open_db
+from .db import in_git_worktree, now, open_db
+from .values import mask
 
 DEFAULT_DB = "firmconvert.db"
 
 
 def _con(args):
+    """Open the database, warning if it is sitting inside a git checkout.
+
+    The matter tables hold client names, dates of birth and claim data. A
+    database created next to the source tree gets committed sooner or later.
+    """
+    repo = in_git_worktree(args.db)
+    if repo is not None:
+        print(f"warning: {args.db} is inside the git repository at {repo}.\n"
+              "         Keep matter data out of version control — move it to the "
+              "firm's client file share\n         or add it to .gitignore.",
+              file=sys.stderr)
     return open_db(args.db)
 
 
@@ -59,6 +71,13 @@ def cmd_review(args):
     for row in catalog.field_summary(con):
         print(f"  {row['field_key']:26} {row['docs']:5d} {row['values']:7d} "
               f"{row['hits']:6d}  {row['label']}")
+    flagged = catalog.flagged_documents(con)
+    if flagged:
+        print(f"\nDocuments carrying markup this tool does not edit "
+              f"({len(flagged)}) — open each template and check it:")
+        for row in flagged:
+            print(f"  {row['name']}: {row['flags']}")
+
     rows = catalog.unmapped(con, args.limit)
     print(f"\nValues no detector could name ({len(rows)} shown) — map or ignore each:")
     if not rows:
@@ -67,7 +86,7 @@ def cmd_review(args):
         docs = row["in_docs"] or ""
         if len(docs) > 60:
             docs = docs[:57] + "..."
-        print(f"  {row['sample']!r}  [{row['detector']}] in {row['docs']} doc(s): {docs}")
+        print(f"  {mask(row['sample'])!r}  [{row['detector']}] in {row['docs']} doc(s): {docs}")
     if rows:
         print('\n  python3 -m wpx map "<value>" <field.key>   to name one')
         print('  python3 -m wpx map "<value>" --ignore       to leave it as literal text')
