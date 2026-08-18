@@ -17,7 +17,9 @@ after it is pure Python standard library and runs anywhere.
 | 4. Review | `python3 -m wpx review` / `map` | Lists what no detector could name, so a human can name it once for the whole corpus. |
 | 5. Templatize | `python3 -m wpx templatize` | Rewrites each letter as a `.docx` template with `{{field}}` placeholders, leaving formatting untouched. `--collapse-schedules` turns a frozen table of bills into one row that repeats. |
 | 6. Forms | `python3 -m wpx forms` | Collapses the templates that turn out to be the same letter saved under different names. |
+| 6b. Contacts | `python3 -m wpx contacts build` | Mines every carrier, adjuster and clinic the firm has written to, with the block each letter was addressed by. |
 | 7. Intake | `python3 -m wpx intake` / `matter set` | One sheet of canonical fields per matter — the "type it once" step. |
+| 7b. Address | `python3 -m wpx address` | Names an entity and the matter is addressed: carrier block, adjuster, clinic address, fax. |
 | 8. Generate | `python3 -m wpx generate` | Fills every form for that matter: one records request per medical provider, and one demand letter whose bill schedule has a row for each. |
 
 ## Quick start
@@ -34,12 +36,18 @@ python3 -m wpx review     --db demo.db
 python3 -m wpx templatize --db demo.db --in samples/Converted --out Templates
 python3 -m wpx forms      --db demo.db --in Templates --out Forms
 
+python3 -m wpx contacts build --db demo.db
+python3 -m wpx contacts list  --db demo.db
+
 python3 -m wpx intake     --db demo.db --templates --out intake.json
 # fill intake.json in, then:
 python3 -m wpx matter set --db demo.db --matter 2026-0311 --from intake.json
-python3 -m wpx matter set --db demo.db --matter 2026-0311 --add-party provider \
-    --set provider.name="Valley Regional Medical Center" \
-    --set provider.attn="Custodian of Records"
+
+# who it is against, and who treated the client — from the contact list
+python3 -m wpx address    --db demo.db --matter 2026-0311 --insurer "Summit Mutual"
+python3 -m wpx address    --db demo.db --matter 2026-0311 --provider "Valley Regional"
+python3 -m wpx address    --db demo.db --matter 2026-0311 --provider "Larkspur"
+
 python3 -m wpx check      --db demo.db --matter 2026-0311
 python3 -m wpx generate   --db demo.db --matter 2026-0311 --templates Forms --out Letters
 ```
@@ -100,6 +108,47 @@ Two things are handled so that one entry really does cover every letter:
   "Mr. Whitfield" or "Dana" keeps saying that instead of expanding to the full
   name.
 
+## The contact list
+
+`contacts build` reads the scan and produces the address book the corpus
+already contained:
+
+```
+  [insurer ] Summit Mutual Insurance Company            Bloomington, IL 61710
+  [provider] Larkspur Chiropractic Clinic               Wasilla, AK 99654
+  [provider] Summit Physical Therapy                       (name only: no address on file)
+  [provider] Valley Regional Medical Center             Palmer, AK 99645
+```
+
+Then one command addresses a matter:
+
+```
+$ python3 -m wpx address --matter 2026-0620 --insurer "Summit Mutual"
+2026-0620 is now addressed to Summit Mutual Insurance Company, attn Marcy Lindholm (4 field(s))
+```
+
+and every letter for that matter comes out with the carrier block, the
+adjuster, the clinic's address and its fax already in place. Names match
+partially and case-insensitively; an ambiguous one lists the candidates rather
+than picking. Adjusters and records custodians are held as people *at* an
+entity, so `--adjuster` picks one without a second contact card.
+
+Two boundaries are enforced rather than trusted:
+
+* **Contacts hold entity details only.** Claim numbers, policy numbers and
+  patient account numbers are facts about a matter; the dictionary marks which
+  fields are durable, and a manual edit that tries to store a claim number on a
+  carrier is refused. Copying a contact can never carry a previous client's
+  number onto the next client's letter.
+* **Addresses come only from letters that addressed one entity.** A demand
+  letter naming four clinics in its bill schedule contributes their names, not
+  their addresses — nothing in that table says which address belongs to which
+  clinic. Those contacts show up as "name only", ready for someone to fill in
+  with `contacts set`.
+
+`contacts build` is re-runnable; anything edited by hand is marked manual and
+left alone. `contacts list --csv contacts.csv` exports the book.
+
 ## Rows that repeat
 
 A demand letter's schedule of medical bills needs one row per provider, not one
@@ -139,6 +188,7 @@ wpx/             stages 2-8
   detect.py      value detection: labels, salutations, propagation, patterns
   blocks.py      letter structure: letterhead, addressee block
   scan.py        stage 2      catalog.py    stage 3
+  contacts.py    the address book mined from the corpus
   repeat.py      {{#each}} blocks: one row per party
   values.py      dates and names: one stored value, many spellings
   templatize.py  stage 5      forms.py      stage 6

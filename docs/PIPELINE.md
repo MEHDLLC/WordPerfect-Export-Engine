@@ -75,6 +75,37 @@ beside it listing both the placeholders written and every value left alone,
 with the reason (`firm-boilerplate`, `unmapped`, `low-confidence`,
 `split-across-markup`). That report is the honest measure of coverage.
 
+## Stage 6b — the contact list
+
+Every carrier and clinic the firm writes to is already in the corpus, in the
+block each letter was addressed by. `contacts build` reads the stored hits and
+turns them into an address book, so a new matter is addressed by naming an
+entity instead of retyping a claims intake address.
+
+Three rules decide what a contact may hold and where it comes from:
+
+* **Durable fields only.** `Field.contact` marks what belongs to the entity —
+  name, address, city/state/ZIP, fax, attention line. Claim numbers, policy
+  numbers, patient account numbers, dates of service and billed amounts are
+  matter facts and are excluded by not being marked. `upsert` filters manual
+  edits through the same list, so there is no path by which a claim number
+  reaches a contact card and then a later client's letter.
+* **Addresses only from a letter addressed to one entity.** Hits from a
+  schedule table are excluded from address attribution, and address details are
+  taken only when a document names exactly one entity of that role. A demand
+  letter listing four clinics contributes four names and no addresses, because
+  nothing in the table says which address is whose. Those contacts are listed
+  as "name only".
+* **People belong to entities.** A carrier has several adjusters over time and
+  a clinic has a records desk; each is stored against the entity with the
+  number of documents supporting it, and the most-seen one is the default when
+  addressing.
+
+Disagreements are kept rather than resolved: where a carrier was addressed at
+two intake addresses, the more common one wins and the other is stored as a
+variant, which `contacts show` prints. `contacts build` is re-runnable and
+never overwrites a contact whose source is `manual`.
+
 ## Stages 7 and 8 — one intake, many letters
 
 A matter is a bag of canonical values. Facts that repeat — a matter has one

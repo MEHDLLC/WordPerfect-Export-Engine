@@ -168,6 +168,26 @@ def load_file(path) -> dict:
     raise ValueError(f"unsupported intake file type: {path.suffix}")
 
 
+def party_scope_for(con, ref: str, role: str, name: str) -> str:
+    """The scope holding this party, or the next free one if it is new.
+
+    Addressing the same clinic twice updates that provider on the file rather
+    than adding a second copy of it.
+    """
+    from .contacts import slugify
+
+    ensure_matter(con, ref)   # addressing a brand-new matter creates it
+    wanted = slugify(name)
+    for scope in scopes(con, ref, f"{role}:"):
+        row = con.execute(
+            "SELECT value FROM matter_values WHERE matter_id=? AND scope=? AND field_key=?",
+            (matter_id(con, ref), scope, f"{role}.name"),
+        ).fetchone()
+        if row and slugify(row["value"]) == wanted:
+            return scope
+    return next_scope(con, ref, role)
+
+
 def scoped_keys(con, ref: str, scope: str) -> set[str]:
     """The field keys stored against one party (not inherited from the matter)."""
     rows = con.execute(

@@ -20,7 +20,9 @@ import json
 import sys
 from pathlib import Path
 
-from . import __version__, catalog, fields as F, forms, matters, render, scan, templatize
+from . import (
+    __version__, catalog, contacts, fields as F, forms, matters, render, scan, templatize,
+)
 from .db import in_git_worktree, now, open_db
 from .values import mask
 
@@ -153,6 +155,125 @@ def cmd_forms(args):
         print("re-run with --out <dir> to write one template per form")
 
 
+def cmd_contacts(args):
+    con = _con(args)
+    args.name = args.name or args.name_opt
+    if args.action == "build":
+        if not con.execute("SELECT COUNT(*) FROM hits").fetchone()[0]:
+            sys.exit("nothing scanned yet — run 'python3 -m wpx scan' first")
+        counts = contacts.build(con)
+        total = sum(v for k, v in counts.items() if k in contacts.ROLES)
+        print(f"\n{total} contact(s) derived from the corpus")
+        print("  python3 -m wpx contacts list          to see them")
+        print("  python3 -m wpx matter address ...     to address a matter from one")
+        return
+
+    if args.action == "list":
+        rows = contacts.listing(con, args.role, args.search)
+        if not rows:
+            print("no contacts — run 'python3 -m wpx contacts build'")
+            return
+        for row in rows:
+            values = contacts.values_for(con, row["id"])
+            where = values.get(f"{row['role']}.city_state_zip", "")
+            gap = "" if where else "   (name only: no address on file)"
+            print(f"  [{row['role']:8}] {row['name']:42} {where}{gap}")
+        if args.csv:
+            _write_contacts_csv(con, rows, args.csv)
+            print(f"\nwrote {args.csv}")
+        return
+
+    if args.action == "show":
+        row = _find_contact(con, args.name, args.role)
+        print(f"[{row['role']}] {row['name']}   (seen in {row['doc_count']} document(s), "
+              f"{row['source']})")
+        for key, value in sorted(contacts.values_for(con, row["id"]).items()):
+            print(f"  {key:26} {value}")
+        people = contacts.people_for(con, row["id"])
+        if people:
+            print(f"  {'people':26} " + ", ".join(
+                f"{p['name']} ({p['doc_count']})" if p["doc_count"] else p["name"]
+                for p in people))
+        for key, variants in contacts.variants_for(con, row["id"]).items():
+            for value, count in variants:
+                print(f"  also seen: {key} = {value} ({count} doc(s))")
+        return
+
+    # set
+    values = {}
+    for pair in args.set or []:
+        key, _, value = pair.partition("=")
+        values[key.strip()] = value.strip()
+    if not args.name:
+        sys.exit("--name is required")
+    ignored = contacts.rejected_keys(args.role, values)
+    contacts.upsert(con, args.role, args.name, values, args.person or [])
+    print(f"saved {args.role} contact: {args.name}")
+    if ignored:
+        print(f"ignored {len(ignored)} field(s) that are not entity details: "
+              f"{', '.join(ignored)}")
+        print("  claim and account numbers belong to a matter, not to a contact")
+
+
+def _find_contact(con, name, role=None):
+    try:
+        return contacts.find(con, name, role)
+    except contacts.Ambiguous as exc:
+        print(f"'{name}' matches {len(exc.matches)} contacts:", file=sys.stderr)
+        for match in exc.matches:
+            print(f"  [{match['role']}] {match['name']}", file=sys.stderr)
+        sys.exit("be more specific, or pass --role")
+    except contacts.NotFound:
+        sys.exit(f"no contact matching '{name}' — try 'python3 -m wpx contacts list'")
+
+
+def _write_contacts_csv(con, rows, path):
+    import csv
+
+    keys = ["role", "name", "person"] + sorted(
+        {k for row in rows for k in contacts.values_for(con, row["id"])}
+    )
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=keys)
+        writer.writeheader()
+        for row in rows:
+            people = contacts.people_for(con, row["id"])
+            record = {"role": row["role"], "name": row["name"],
+                      "person": people[0]["name"] if people else ""}
+            record.update(contacts.values_for(con, row["id"]))
+            writer.writerow(record)
+
+
+def cmd_address(args):
+    con = _con(args)
+    if not (args.insurer or args.provider):
+        sys.exit("pass --insurer <name> and/or --provider <name>")
+    if args.insurer:
+        contact = _find_contact(con, args.insurer, "insurer")
+        values = contacts.address_block(con, contact, args.adjuster)
+        stored, _ = matters.set_values(con, args.matter, values)
+        person = values.get("adjuster.name", "")
+        print(f"{args.matter} is now addressed to {contact['name']}"
+              + (f", attn {person}" if person else "")
+              + f" ({stored} field(s))")
+        _warn_thin(contact, values, "insurer")
+    if args.provider:
+        contact = _find_contact(con, args.provider, "provider")
+        values = contacts.address_block(con, contact, args.attn)
+        scope = matters.party_scope_for(con, args.matter, "provider", contact["name"])
+        stored, _ = matters.set_values(con, args.matter, values, scope)
+        print(f"{contact['name']} is on {args.matter} as {scope} ({stored} field(s))")
+        _warn_thin(contact, values, "provider")
+
+
+def _warn_thin(contact, values, role):
+    if not values.get(f"{role}.city_state_zip"):
+        print(f"  note: no address on file for {contact['name']} — it was only ever "
+              f"named in passing.\n"
+              f"        python3 -m wpx contacts set --role {role} "
+              f"--name \"{contact['name']}\" --set {role}.address=...")
+
+
 def cmd_intake(args):
     con = _con(args)
     keys = None
@@ -276,7 +397,13 @@ def cmd_generate(args):
     print(f"\ngenerated {len(results)} document(s) in {args.output}")
     if missing:
         print(f"missing values used in those documents: {', '.join(missing)}")
-        print(f"  python3 -m wpx matter set --matter {args.matter} --set <field>=<value>")
+        party = [k for k in missing if k.startswith(tuple(f"{r}." for r in render.ROLES))]
+        if party:
+            # These belong to one party on the file, not to the matter.
+            print(f"  python3 -m wpx matter set --matter {args.matter} "
+                  f"--scope provider:1 --set {party[0]}=<value>")
+        if len(party) < len(missing):
+            print(f"  python3 -m wpx matter set --matter {args.matter} --set <field>=<value>")
 
 
 # --- wiring -----------------------------------------------------------------
@@ -332,6 +459,31 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--in", dest="input", required=True, help="folder of templates")
     p.add_argument("--out", dest="output", help="write one template per distinct form")
     p.set_defaults(func=cmd_forms)
+
+    p = sub.add_parser("contacts", parents=[common],
+                       help="the address book derived from the corpus")
+    p.add_argument("action", choices=["build", "list", "show", "set"])
+    # Accepted either way round: "contacts show Summit --db x" and
+    # "contacts show --db x --name Summit". argparse cannot match a trailing
+    # positional that follows an option, and people type both.
+    p.add_argument("name", nargs="?", help="contact name (show, set)")
+    p.add_argument("--name", dest="name_opt", help=argparse.SUPPRESS)
+    p.add_argument("--role", choices=sorted(contacts.ROLES))
+    p.add_argument("--search", help="filter the list by name")
+    p.add_argument("--set", action="append", metavar="field.key=value")
+    p.add_argument("--person", action="append", metavar="NAME",
+                   help="an adjuster or records custodian at this entity")
+    p.add_argument("--csv", help="also write the list to this .csv")
+    p.set_defaults(func=cmd_contacts)
+
+    p = sub.add_parser("address", parents=[common],
+                       help="address a matter from the contact list")
+    p.add_argument("--matter", required=True)
+    p.add_argument("--insurer", help="carrier name, or part of one")
+    p.add_argument("--adjuster", help="which adjuster at that carrier")
+    p.add_argument("--provider", help="provider name, or part of one")
+    p.add_argument("--attn", help="attention line for that provider")
+    p.set_defaults(func=cmd_address)
 
     p = sub.add_parser("intake", parents=[common], help="print or write a blank intake sheet")
     p.add_argument("--matter", help="pre-fill with this matter's stored values")

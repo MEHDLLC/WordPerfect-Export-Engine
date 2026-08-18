@@ -64,6 +64,39 @@ CREATE TABLE IF NOT EXISTS value_overrides (
     created_at TEXT
 );
 
+-- The address book, mined from the corpus: every carrier and clinic the firm
+-- has written to, with the block it was addressed by. Durable entity details
+-- only (see Field.contact) — never a claim number or an account number, which
+-- belong to a matter.
+CREATE TABLE IF NOT EXISTS contacts (
+    id         INTEGER PRIMARY KEY,
+    role       TEXT NOT NULL,          -- insurer | provider | firm
+    slug       TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    doc_count  INTEGER NOT NULL DEFAULT 0,
+    source     TEXT NOT NULL DEFAULT 'corpus',   -- corpus | manual
+    updated_at TEXT,
+    UNIQUE (role, slug)
+);
+
+CREATE TABLE IF NOT EXISTS contact_values (
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    field_key  TEXT NOT NULL,
+    value      TEXT,
+    doc_count  INTEGER NOT NULL DEFAULT 0,
+    variants   TEXT,          -- JSON [[value, count], ...] a carrier with two intake addresses
+    PRIMARY KEY (contact_id, field_key)
+);
+
+-- Adjusters at a carrier, records custodians at a clinic: one entity, many people.
+CREATE TABLE IF NOT EXISTS contact_people (
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    field_key  TEXT NOT NULL,          -- adjuster.name | provider.attn
+    name       TEXT NOT NULL,
+    doc_count  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (contact_id, field_key, name)
+);
+
 CREATE TABLE IF NOT EXISTS matters (
     id         INTEGER PRIMARY KEY,
     ref        TEXT NOT NULL UNIQUE,

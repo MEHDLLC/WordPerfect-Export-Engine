@@ -30,6 +30,7 @@ class Field:
     aliases: tuple[str, ...] = ()   # labels seen in the documents themselves
     always_variable: bool = True    # False = usually firm boilerplate
     derived: bool = False           # computed from another field, never asked for
+    contact: bool = False           # durable for the entity: belongs in the address book
     note: str = ""
 
     def matches_label(self, label: str) -> bool:
@@ -46,14 +47,14 @@ def normalize_label(label: str) -> str:
 
 FIELDS: tuple[Field, ...] = (
     # --- the firm itself: same on every letter, so not a per-matter variable --
-    Field("firm.name", "Firm name", "firm", TEXT, always_variable=False),
+    Field("firm.name", "Firm name", "firm", TEXT, always_variable=False, contact=True),
     Field("firm.attorney", "Attorney", "firm", NAME,
-          aliases=("attorney", "attorney at law"), always_variable=False),
-    Field("firm.address", "Firm street address", "firm", ADDRESS, always_variable=False),
-    Field("firm.city_state_zip", "Firm city, state ZIP", "firm", ADDRESS, always_variable=False),
-    Field("firm.phone", "Firm phone", "firm", PHONE, always_variable=False),
-    Field("firm.fax", "Firm fax", "firm", PHONE, always_variable=False),
-    Field("firm.email", "Firm email", "firm", TEXT, always_variable=False),
+          aliases=("attorney", "attorney at law"), always_variable=False, contact=True),
+    Field("firm.address", "Firm street address", "firm", ADDRESS, always_variable=False, contact=True),
+    Field("firm.city_state_zip", "Firm city, state ZIP", "firm", ADDRESS, always_variable=False, contact=True),
+    Field("firm.phone", "Firm phone", "firm", PHONE, always_variable=False, contact=True),
+    Field("firm.fax", "Firm fax", "firm", PHONE, always_variable=False, contact=True),
+    Field("firm.email", "Firm email", "firm", TEXT, always_variable=False, contact=True),
 
     # --- the client -------------------------------------------------------
     Field("client.name", "Client name", "client", NAME,
@@ -89,14 +90,15 @@ FIELDS: tuple[Field, ...] = (
     # --- the carrier and its people --------------------------------------
     Field("insurer.name", "Insurance carrier", "insurer", NAME,
           aliases=("insurance company", "carrier", "insurer", "insurance carrier",
-                   "company")),
+                   "company"), contact=True),
     Field("insurer.claim_no", "Claim number", "insurer", NUMBER,
           aliases=("claim no", "claim number", "claim", "your claim no",
                    "claim no s", "your claim number", "claim id")),
     Field("insurer.policy_no", "Policy number", "insurer", NUMBER,
           aliases=("policy no", "policy number", "policy")),
-    Field("insurer.address", "Carrier street address", "insurer", ADDRESS),
-    Field("insurer.city_state_zip", "Carrier city, state ZIP", "insurer", ADDRESS),
+    Field("insurer.address", "Carrier street address", "insurer", ADDRESS, contact=True),
+    Field("insurer.city_state_zip", "Carrier city, state ZIP", "insurer", ADDRESS,
+          contact=True),
     Field("adjuster.name", "Adjuster", "insurer", NAME,
           aliases=("adjuster", "claims adjuster", "claim representative",
                    "claim rep", "claims representative", "adjustor")),
@@ -110,13 +112,15 @@ FIELDS: tuple[Field, ...] = (
 
     # --- medical providers (records and billing requests) -----------------
     Field("provider.name", "Provider name", "provider", NAME,
-          aliases=("provider", "facility", "clinic", "hospital", "medical provider")),
+          aliases=("provider", "facility", "clinic", "hospital", "medical provider"),
+          contact=True),
     Field("provider.attn", "Provider attention line", "provider", TEXT,
           aliases=("attn", "attention", "records custodian", "medical records",
-                   "custodian of records")),
-    Field("provider.address", "Provider street address", "provider", ADDRESS),
-    Field("provider.city_state_zip", "Provider city, state ZIP", "provider", ADDRESS),
-    Field("provider.fax", "Provider fax", "provider", PHONE),
+                   "custodian of records"), contact=True),
+    Field("provider.address", "Provider street address", "provider", ADDRESS, contact=True),
+    Field("provider.city_state_zip", "Provider city, state ZIP", "provider", ADDRESS,
+          contact=True),
+    Field("provider.fax", "Provider fax", "provider", PHONE, contact=True),
     Field("provider.account_no", "Patient account number", "provider", NUMBER,
           aliases=("account no", "acct no", "patient account no",
                    "patient account number", "mrn", "medical record no")),
@@ -169,6 +173,16 @@ def placeholder(key: str, style: str = "") -> str:
 # The optional ":style" suffix records how a date was written in the original
 # letter, so a template can reproduce that spelling from one stored value.
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)(?::([a-z]+))?\s*\}\}")
+
+
+def contact_fields(prefixes) -> list[Field]:
+    """The durable fields for an entity — what an address book stores.
+
+    Claim numbers, account numbers and billed amounts are excluded by not
+    being marked: they belong to a matter, and copying one carrier's contact
+    card must never carry a previous client's claim number with it.
+    """
+    return [f for f in FIELDS if f.contact and f.key.startswith(tuple(prefixes))]
 
 
 def person_prefixes() -> set[str]:
