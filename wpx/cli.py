@@ -276,6 +276,8 @@ def _warn_thin(contact, values, role):
 
 def cmd_intake(args):
     con = _con(args)
+    if args.html:
+        return _write_intake_file(con, args)
     keys = None
     if args.templates:
         used = matters.template_fields(con)
@@ -296,6 +298,27 @@ def cmd_intake(args):
         print("fill it in, then: python3 -m wpx matter set --matter <ref> --from " + args.output)
     else:
         print(text)
+
+
+def _write_intake_file(con, args):
+    from . import intake_file
+
+    values, parties = {}, []
+    if args.matter:
+        try:
+            values = matters.values(con, args.matter)
+            for scope in matters.scopes(con, args.matter, "provider:"):
+                keys = matters.scoped_keys(con, args.matter, scope)
+                party = matters.values(con, args.matter, scope)
+                parties.append({k: v for k, v in party.items() if k in keys})
+        except KeyError:
+            pass  # a new matter: an empty sheet is exactly right
+    out = args.output or f"Intake - {intake_file.safe_stem(values.get('client.name') or args.matter or 'client')}.html"
+    path = intake_file.build(out, args.matter or "", values, parties)
+    print(f"wrote {path}")
+    print("  Put it in the client's folder and open it by double-clicking.")
+    print("  It needs no install and works with no internet connection.")
+    print(f"  When it comes back: python3 -m wpx matter set --matter <ref> --from \"{path.name}\"")
 
 
 def cmd_matter(args):
@@ -324,18 +347,26 @@ def cmd_matter(args):
         print(f"created matter {args.matter}")
         return
     # set
-    values = {}
+    values, parties = {}, []
     if args.from_file:
-        values.update(matters.load_file(args.from_file))
+        answers = matters.load_answers(args.from_file)
+        values.update(answers["values"])
+        parties = answers["parties"]
     for pair in args.set or []:
         key, _, value = pair.partition("=")
         values[key.strip()] = value.strip()
-    if not values:
+    if not values and not parties:
         sys.exit("nothing to set: pass --from <file> or --set key=value")
     scope = args.scope or ""
     if args.add_party:
         scope = matters.next_scope(con, args.matter, args.add_party)
     stored, unknown = matters.set_values(con, args.matter, values, scope)
+    for party in parties:
+        name = party.get("provider.name", "")
+        party_scope = (matters.party_scope_for(con, args.matter, "provider", name)
+                       if name else matters.next_scope(con, args.matter, "provider"))
+        count, _ = matters.set_values(con, args.matter, party, party_scope)
+        print(f"stored {count} value(s) for {name or party_scope} [{party_scope}]")
     blank = sum(1 for k, v in values.items() if k in F.BY_KEY and not str(v).strip())
     note = f" ({blank} still blank)" if blank else ""
     print(f"stored {stored} value(s) for {args.matter}"
@@ -355,35 +386,38 @@ def cmd_check(args):
 
     # A provider field is not missing from the matter, it is missing from one
     # provider — so report those per party rather than as one flat list.
-    parties = [] if args.scope else matters.scopes(con, args.matter, "provider:")
-    per_party = {
-        scope: matters.missing_for(con, args.matter, args.only, scope, supplied)
-        for scope in parties
-    }
+    if args.scope:
+        ready = [n for n, keys in missing.items() if not keys]
+        print(f"{len(ready)}/{len(missing)} template(s) ready for {args.matter} [{args.scope}]")
+        for name, keys in sorted(missing.items()):
+            print(f"  {name}: " + (f"needs {', '.join(keys)}" if keys else "ready"))
+        return
 
-    def gaps(name):
-        keys = [k for k in missing[name] if not k.startswith("provider.")]
-        if not parties:
-            return keys, {}
-        by_party = {
-            scope: [k for k in per_party[scope][name] if k.startswith("provider.")]
-            for scope in parties
-        }
-        return keys, {s: v for s, v in by_party.items() if v}
-
-    report = {name: gaps(name) for name in missing}
-    ready = [name for name, (keys, party_gaps) in report.items() if not keys and not party_gaps]
-    print(f"{len(ready)}/{len(missing)} template(s) ready for {args.matter}")
-    for name in sorted(missing):
-        keys, party_gaps = report[name]
-        if not keys and not party_gaps:
-            print(f"  {name}: ready")
+    report = matters.readiness(con, args.matter, supplied, args.only)
+    ready = [r for r in report if r["ready"]]
+    print(f"{len(ready)}/{len(report)} template(s) ready for {args.matter}")
+    for row in report:
+        if row["ready"]:
+            print(f"  {row['template']}: ready")
             continue
-        if keys:
-            print(f"  {name}: needs {', '.join(keys)}")
-        for scope, party_keys in sorted(party_gaps.items()):
-            label = matters.values(con, args.matter, scope).get("provider.name", scope)
-            print(f"  {name}: {label} needs {', '.join(party_keys)}")
+        if row["needs"]:
+            print(f"  {row['template']}: needs {', '.join(row['needs'])}")
+        for gap in row["parties"]:
+            print(f"  {row['template']}: {gap['label']} needs {', '.join(gap['needs'])}")
+
+
+def cmd_serve(args):
+    from . import serve as server_module
+
+    server = server_module.serve(
+        args.db, args.templates, args.output, args.port, not args.no_browser
+    )
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    finally:
+        server.server_close()
 
 
 def cmd_generate(args):
@@ -490,6 +524,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", dest="output")
     p.add_argument("--templates", action="store_true",
                    help="limit to fields the registered templates actually use")
+    p.add_argument("--html", action="store_true",
+                   help="write a self-contained Intake.html for a client folder")
     p.set_defaults(func=cmd_intake)
 
     p = sub.add_parser("matter", parents=[common], help="create, fill and inspect a matter")
@@ -507,6 +543,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--only", nargs="*")
     p.add_argument("--scope", default="", help="check against one party, e.g. provider:1")
     p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser("serve", parents=[common],
+                       help="open the interview in a browser on this computer")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--templates", default="Templates")
+    p.add_argument("--out", dest="output", default="Letters")
+    p.add_argument("--no-browser", action="store_true", help="do not open a browser window")
+    p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("generate", parents=[common], help="fill every template for one matter")
     p.add_argument("--matter", required=True)

@@ -216,7 +216,7 @@ def generate(
                 stem = f"{stem} - {label}"
             elif scope:
                 stem = f"{stem} - {scope.replace(':', ' ')}"
-            dest = outdir / f"{_safe(stem)}.docx"
+            dest = outdir / f"{safe_name(stem)}.docx"
             result = render(template, values, dest, on_missing, parties)
             results.append(result)
             if echo:
@@ -235,11 +235,12 @@ def generate(
         ],
     }
     outdir.mkdir(parents=True, exist_ok=True)
-    (outdir / f"{_safe(ref)}.manifest.json").write_text(
+    (outdir / f"{safe_name(ref)}.manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
     )
     return results
 
 
-def _safe(name: str) -> str:
+def safe_name(name: str) -> str:
+    """A file or folder name that Windows will accept."""
     return re.sub(r'[\\/:*?"<>|]+', "-", name).strip()

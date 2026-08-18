@@ -155,6 +155,29 @@ def flatten(sheet: dict) -> dict:
     return flat
 
 
+def load_answers(path) -> dict:
+    """Read a filled intake file: the matter, its values, and its parties.
+
+    Accepts a saved Intake.html, the .json it can export, or a plain
+    key,value .csv — whatever comes back from the client folder.
+    """
+    path = Path(path)
+    if path.suffix.lower() in (".html", ".htm"):
+        from .intake_file import read_answers
+
+        return read_answers(path)
+    if path.suffix.lower() == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and "values" in payload:
+            parties = payload.get("parties") or []
+            return {
+                "matter": payload.get("matter", ""),
+                "values": flatten(payload["values"]),
+                "parties": [p.get("values", p) if isinstance(p, dict) else {} for p in parties],
+            }
+    return {"matter": "", "values": load_file(path), "parties": []}
+
+
 def load_file(path) -> dict:
     """Read matter values from .json or a two-column .csv (key,value)."""
     path = Path(path)
@@ -186,6 +209,65 @@ def party_scope_for(con, ref: str, role: str, name: str) -> str:
         if row and slugify(row["value"]) == wanted:
             return scope
     return next_scope(con, ref, role)
+
+
+def remove_scope(con, ref: str, scope: str) -> int:
+    """Take a party off a matter."""
+    cur = con.execute(
+        "DELETE FROM matter_values WHERE matter_id=? AND scope=?", (matter_id(con, ref), scope)
+    )
+    con.commit()
+    return cur.rowcount
+
+
+def replace_parties(con, ref: str, role: str, parties: list) -> list[str]:
+    """Make the matter's parties of this role match the list given.
+
+    Each entry may carry the scope it came from; entries without one are new
+    and get the next free slot. Scopes that are no longer in the list are
+    removed, which is how deleting a provider in the interview takes effect.
+    """
+    ensure_matter(con, ref)
+    keep = {p.get("scope") for p in parties if p.get("scope")}
+    for scope in scopes(con, ref, f"{role}:"):
+        if scope not in keep:
+            remove_scope(con, ref, scope)
+    assigned = []
+    for party in parties:
+        scope = party.get("scope") or next_scope(con, ref, role)
+        set_values(con, ref, party.get("values", {}), scope)
+        assigned.append(scope)
+    return assigned
+
+
+def readiness(con, ref: str, supplied=(), only=None) -> list[dict]:
+    """Per template: can this matter produce it yet, and what is missing.
+
+    Party fields are reported against the party that lacks them — a records
+    request is not missing "provider.fax" in general, one clinic is.
+    """
+    missing = missing_for(con, ref, only, "", supplied)
+    parties = scopes(con, ref, "provider:")
+    per_party = {s: missing_for(con, ref, only, s, supplied) for s in parties}
+    report = []
+    for name in sorted(missing):
+        own = [k for k in missing[name] if not k.startswith("provider.")]
+        gaps = []
+        for scope in parties:
+            keys = [k for k in per_party[scope][name] if k.startswith("provider.")]
+            if keys:
+                gaps.append({
+                    "scope": scope,
+                    "label": values(con, ref, scope).get("provider.name") or scope,
+                    "needs": keys,
+                })
+        report.append({
+            "template": name,
+            "needs": own,
+            "parties": gaps,
+            "ready": not own and not gaps,
+        })
+    return report
 
 
 def scoped_keys(con, ref: str, scope: str) -> set[str]:

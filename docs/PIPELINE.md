@@ -138,6 +138,44 @@ Missing values are marked `[MISSING: Claim number]` in the output by default,
 not left blank: a gap that is visible in review is safer than one that is not.
 `--on-missing` can make it blank, leave the placeholder, or fail outright.
 
+## The two interviews
+
+Stage 7 has a browser interface in two forms, both drawn by `wpx/webform.py`
+from the same schema — the field dictionary with the derived fields removed and
+the provider group marked repeating. Nothing in either page enumerates fields
+itself, so the two cannot drift apart, and a field added to the dictionary
+turns up in both.
+
+**`wpx serve`** is the office app. The standard library's own HTTP server, one
+page, a handful of JSON endpoints, no framework and nothing to install. It
+binds to `127.0.0.1` — never `0.0.0.0` — and every request carries a key
+printed with the URL at start-up. That key is not ceremony: any page in any
+browser tab can POST to `localhost`, and this database holds dates of birth and
+claim numbers. Requests arriving with a different `Host` header are refused for
+the same reason.
+
+The "what this writes" panel is the same readiness report `wpx check` prints,
+and the write button generates exactly the letters the panel called ready —
+writing extra copies stamped `[MISSING: ...]` would not match what the button
+promised.
+
+**`wpx intake --html`** writes a self-contained file for a client's folder. No
+webfonts, no CDN, no network of any kind: it has to work on a laptop at a
+client meeting with no connection, and client details should not leave the
+machine they were typed on.
+
+Saving is the interesting part. The page writes a fresh copy of *itself* with
+the answers baked into its data block and the drawn form emptied, so opening
+that copy redraws everything from the answers. No second file to keep beside
+the first, no database, and no `localStorage` for an IT policy to clear — the
+document is its own save file, and it stays plain HTML that any browser will
+still read in ten years, which is the whole point of leaving WordPerfect.
+`matter set --from Intake.html` reads the answers back, providers included.
+
+Client names go through `html.escape` in the page builder rather than at each
+call site, and the answers block is written with `</` escaped so no name can
+close the script it sits in. A client called `O'Brien & Sons` is not exotic.
+
 ## Values that are the same fact spelled differently
 
 Two shapes would otherwise defeat "enter it once", so both are handled in

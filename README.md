@@ -26,6 +26,38 @@ machine, and the day-to-day work — templates, contacts, intake, generating a
 matter's packet — happens wherever the firm prefers. Move the `Converted`
 folder and the `.db` file and everything continues where it left off.
 
+## Without the command prompt
+
+Two of the stages now have a browser interface. Neither one is a website:
+both run on the firm's own machine, and nothing is sent anywhere.
+
+```bash
+python3 -m wpx serve                      # the office app — or double-click
+                                          # "Start Letter Desk.bat" on Windows
+python3 -m wpx intake --html --matter 2026-0620 \
+        --out "Clients/Whitfield/Intake.html"     # the travelling intake file
+```
+
+**The office app** opens the interview for a matter: every field grouped the
+way a file is opened, the carrier and each clinic filled from the contact list
+in one click, a panel naming which letters are ready and what the rest are
+waiting for, and a button that writes them. It listens on `127.0.0.1` only and
+every request carries a key printed at start-up, because the database holds
+dates of birth and claim numbers.
+
+**Intake.html** is one self-contained file for a client's folder — no install,
+no server, no internet, opens on any computer by double-clicking. Saving writes
+a fresh copy of the file with the answers inside it, so reopening it a month
+later brings everything back. When it returns to the office:
+
+```bash
+python3 -m wpx matter set --matter 2026-0620 --from "Clients/Whitfield/Intake.html"
+```
+
+Both interfaces are generated from the field dictionary, so a field added to
+`wpx/fields.py` appears in the app and in every intake file written afterwards
+with no markup to change.
+
 ## The pipeline
 
 | Stage | Command | What it does |
@@ -39,6 +71,7 @@ folder and the `.db` file and everything continues where it left off.
 | 6b. Contacts | `python3 -m wpx contacts build` | Mines every carrier, adjuster and clinic the firm has written to, with the block each letter was addressed by. |
 | 7. Intake | `python3 -m wpx intake` / `matter set` | One sheet of canonical fields per matter — the "type it once" step. |
 | 7b. Address | `python3 -m wpx address` | Names an entity and the matter is addressed: carrier block, adjuster, clinic address, fax. |
+| 7c. Interview in a browser | `python3 -m wpx serve` / `intake --html` | The same questions as a web page: the office app, or one file saved in a client's folder. |
 | 8. Generate | `python3 -m wpx generate` | Fills every form for that matter: one records request per medical provider, and one demand letter whose bill schedule has a row for each. |
 
 ## Quick start
@@ -208,6 +241,9 @@ wpx/             stages 2-8
   blocks.py      letter structure: letterhead, addressee block
   scan.py        stage 2      catalog.py    stage 3
   contacts.py    the address book mined from the corpus
+  webform.py     the interview form, generated from the dictionary
+  serve.py       the office app (stage 7 in a browser, this machine only)
+  intake_file.py the self-contained Intake.html for a client folder
   repeat.py      {{#each}} blocks: one row per party
   values.py      dates and names: one stored value, many spellings
   templatize.py  stage 5      forms.py      stage 6
