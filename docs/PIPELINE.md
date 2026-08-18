@@ -141,16 +141,57 @@ template built from such a document has to be opened and checked. Reporting
 them is the point: silently skipping them would make coverage look better than
 it is.
 
-## Still open
+## Repeating blocks
 
-**Repeating table rows.** A demand letter's schedule of medical bills has one
-row per provider. Party scopes already generate one *letter* per provider, but
-not one *row*. The cheap version: support `{{#each provider}}` in a table
-row's first cell, clone that row per party scope at render time, and delete the
-template row — the XML layer already holds the elements, so this is element
-cloning plus a scoped substitution pass, roughly 120 lines and a day with
-tests. Recognizing which existing table *is* a schedule should stay manual: a
-person marks the row once per template, rather than a detector guessing.
+Party scopes generate one *letter* per provider. A demand letter needs the
+other shape: one letter whose schedule of bills has one *row* per provider.
+A marked unit repeats:
+
+    {{#each provider}} | {{provider.name}} | {{provider.dates_of_service}} | ...
+
+Put the marker in a table row and that row repeats; put it in an ordinary
+paragraph and that paragraph repeats; close with `{{/each}}` in a later
+sibling to repeat several rows or paragraphs as one unit. At render time the
+marked elements are deep-copied once per party, filled from that party's
+values, and the original is removed — so cell formatting, borders and widths
+come through unchanged.
+
+Three consequences worth knowing:
+
+* **A repeated role is consumed inside the document.** A records request
+  mentions `provider.*` fields with no marker, so it is generated once per
+  provider. A demand letter mentions them inside a schedule, so it stays one
+  letter. `scoping_keys()` is what draws that line: only placeholders outside a
+  repeating block or a schedule table decide who a whole letter is written to.
+* **A role with no parties still renders one copy**, with the missing policy
+  applied — an empty row reading "[MISSING: Provider name]" is a question
+  someone will answer, where a row this tool deleted on its own is one nobody
+  would ever see.
+* **`check` reports party gaps per party**, naming the provider that is missing
+  a billed amount rather than listing `provider.billed_amount` against the
+  matter as a whole.
+
+### Finding the tables worth marking
+
+A converted demand letter's schedule is one matter's providers frozen into
+rows, so templatizing it yields two or three rows that all say
+`{{provider.name}}`. The templatizer detects exactly that — a table whose data
+rows carry identical field sets — and reports it in the sidecar. `templatize
+--collapse-schedules` acts on the clear-cut ones: keep the first data row, mark
+it `{{#each provider}}`, drop the rest.
+
+Detection stays this conservative deliberately. Whether a table is a schedule
+of bills or a signature block is the judgement call a heuristic gets wrong, and
+getting it wrong means silently deleting rows from a demand letter. Rows that
+differ from each other are never touched, and the collapse is opt-in.
+
+Column meanings come from the table's own header row: "Provider | Dates of
+Service | Amount Billed" resolves through the same alias table the label pass
+uses. In a table that names providers, a column that would otherwise resolve to
+a matter-level field takes its per-provider counterpart, since one row per
+provider is what the table means.
+
+## Still open
 
 **Word-native fields.** Placeholders are `{{field}}` text, which the generator
 fills but Word does not understand. Emitting `w:sdt` content controls tagged

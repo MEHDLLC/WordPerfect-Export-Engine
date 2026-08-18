@@ -18,7 +18,7 @@ from .docxml import DocxFile
 DOC_SUFFIXES = (".docx",)
 
 
-def detect_document(paragraphs, overrides: dict | None = None) -> list[detect.Hit]:
+def detect_document(paragraphs, overrides: dict | None = None, doc=None) -> list[detect.Hit]:
     """Every detector, in trust order, de-overlapped.
 
     overrides maps a normalized value to a field key a human confirmed (or to
@@ -32,6 +32,8 @@ def detect_document(paragraphs, overrides: dict | None = None) -> list[detect.Hi
         + detect.find_salutations(paragraphs)
         + detect.find_patterns(paragraphs)
     )
+    if doc is not None:
+        found += blocks.read_tables(doc, paragraphs)
     if overrides:
         found = apply_overrides(found, overrides)
     known = [h for h in found if h.field_key]
@@ -71,7 +73,7 @@ def load_overrides(con) -> dict:
 
 def scan_file(path, overrides: dict | None = None) -> tuple[DocxFile, list[detect.Hit]]:
     doc = DocxFile(path)
-    return doc, detect_document(doc.paragraphs(), overrides)
+    return doc, detect_document(doc.paragraphs(), overrides, doc)
 
 
 def sha256_file(path, bufsize: int = 1 << 20) -> str:

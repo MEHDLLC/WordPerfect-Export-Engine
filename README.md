@@ -15,10 +15,10 @@ after it is pure Python standard library and runs anywhere.
 | 2. Scan | `python3 -m wpx scan` | Reads each converted letter and records every value that looks like data — labelled fields, letterhead, addressee blocks, names repeated through the body. |
 | 3. Catalog | `python3 -m wpx catalog` | Decides which values are firm boilerplate and which change from matter to matter. |
 | 4. Review | `python3 -m wpx review` / `map` | Lists what no detector could name, so a human can name it once for the whole corpus. |
-| 5. Templatize | `python3 -m wpx templatize` | Rewrites each letter as a `.docx` template with `{{field}}` placeholders, leaving formatting untouched. |
+| 5. Templatize | `python3 -m wpx templatize` | Rewrites each letter as a `.docx` template with `{{field}}` placeholders, leaving formatting untouched. `--collapse-schedules` turns a frozen table of bills into one row that repeats. |
 | 6. Forms | `python3 -m wpx forms` | Collapses the templates that turn out to be the same letter saved under different names. |
 | 7. Intake | `python3 -m wpx intake` / `matter set` | One sheet of canonical fields per matter — the "type it once" step. |
-| 8. Generate | `python3 -m wpx generate` | Fills every form for that matter, including one records request per medical provider. |
+| 8. Generate | `python3 -m wpx generate` | Fills every form for that matter: one records request per medical provider, and one demand letter whose bill schedule has a row for each. |
 
 ## Quick start
 
@@ -100,6 +100,22 @@ Two things are handled so that one entry really does cover every letter:
   "Mr. Whitfield" or "Dana" keeps saying that instead of expanding to the full
   name.
 
+## Rows that repeat
+
+A demand letter's schedule of medical bills needs one row per provider, not one
+letter per provider. Mark the row once:
+
+```
+{{#each provider}} | {{provider.name}} | {{provider.dates_of_service}} | {{provider.billed_amount}}
+```
+
+and every provider on the matter gets a row, with the cell formatting intact.
+`templatize --collapse-schedules` writes that marker for you where a converted
+letter left several identical rows behind. A template that repeats over
+providers stays a single letter; one that mentions providers without a marker
+is still generated once per provider. `{{/each}}` in a later row or paragraph
+repeats a multi-row unit.
+
 Client data lives in the same SQLite file: it is created mode `0600`, every
 command warns if it sits inside a git checkout, and social security numbers are
 recognized by shape (so they become placeholders rather than being baked into a
@@ -123,6 +139,8 @@ wpx/             stages 2-8
   detect.py      value detection: labels, salutations, propagation, patterns
   blocks.py      letter structure: letterhead, addressee block
   scan.py        stage 2      catalog.py    stage 3
+  repeat.py      {{#each}} blocks: one row per party
+  values.py      dates and names: one stored value, many spellings
   templatize.py  stage 5      forms.py      stage 6
   matters.py     stage 7      render.py     stage 8
   db.py          shared SQLite schema

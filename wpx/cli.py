@@ -131,7 +131,8 @@ def cmd_templatize(args):
     if not con.execute("SELECT COUNT(*) FROM catalog").fetchone()[0]:
         sys.exit("no catalog yet — run 'python3 -m wpx scan' then 'catalog' first")
     results = templatize.templatize_corpus(
-        con, args.input, args.output, args.min_confidence, args.include_constants
+        con, args.input, args.output, args.min_confidence, args.include_constants,
+        args.collapse_schedules,
     )
     total = sum(r.replaced for r in results)
     review = sum(
@@ -230,13 +231,38 @@ def cmd_check(args):
     if not missing:
         print("no templates registered — run 'python3 -m wpx templatize' first")
         return
-    ready = [name for name, keys in missing.items() if not keys]
+
+    # A provider field is not missing from the matter, it is missing from one
+    # provider — so report those per party rather than as one flat list.
+    parties = [] if args.scope else matters.scopes(con, args.matter, "provider:")
+    per_party = {
+        scope: matters.missing_for(con, args.matter, args.only, scope, supplied)
+        for scope in parties
+    }
+
+    def gaps(name):
+        keys = [k for k in missing[name] if not k.startswith("provider.")]
+        if not parties:
+            return keys, {}
+        by_party = {
+            scope: [k for k in per_party[scope][name] if k.startswith("provider.")]
+            for scope in parties
+        }
+        return keys, {s: v for s, v in by_party.items() if v}
+
+    report = {name: gaps(name) for name in missing}
+    ready = [name for name, (keys, party_gaps) in report.items() if not keys and not party_gaps]
     print(f"{len(ready)}/{len(missing)} template(s) ready for {args.matter}")
-    for name, keys in sorted(missing.items()):
+    for name in sorted(missing):
+        keys, party_gaps = report[name]
+        if not keys and not party_gaps:
+            print(f"  {name}: ready")
+            continue
         if keys:
             print(f"  {name}: needs {', '.join(keys)}")
-    for name in sorted(ready):
-        print(f"  {name}: ready")
+        for scope, party_keys in sorted(party_gaps.items()):
+            label = matters.values(con, args.matter, scope).get("provider.name", scope)
+            print(f"  {name}: {label} needs {', '.join(party_keys)}")
 
 
 def cmd_generate(args):
@@ -296,6 +322,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-confidence", type=float, default=templatize.DEFAULT_MIN_CONFIDENCE)
     p.add_argument("--include-constants", action="store_true",
                    help="also parameterize letterhead and other firm boilerplate")
+    p.add_argument("--collapse-schedules", action="store_true",
+                   help="turn a table whose rows repeat the same fields into one "
+                        "row marked {{#each provider}}")
     p.set_defaults(func=cmd_templatize)
 
     p = sub.add_parser("forms", parents=[common],

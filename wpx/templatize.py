@@ -23,6 +23,7 @@ from .catalog import CONSTANT
 from .db import now
 from .detect import normalize_value
 from .docxml import DocxFile, ReplacementError
+from .repeat import collapse_schedule, find_schedules
 from .scan import detect_document
 from .values import date_style, mask, parse_date
 
@@ -37,6 +38,7 @@ class TemplateResult:
     replaced: int = 0
     fields_used: Counter = _dc_field(default_factory=Counter)
     left_in_place: list = _dc_field(default_factory=list)
+    schedules: list = _dc_field(default_factory=list)
 
     def report(self) -> dict:
         return {
@@ -53,6 +55,7 @@ class TemplateResult:
                 for key, count in sorted(self.fields_used.items())
             ],
             "left_in_place": self.left_in_place,
+            "schedules": self.schedules,
         }
 
 
@@ -90,13 +93,14 @@ def templatize(
     min_confidence: float = DEFAULT_MIN_CONFIDENCE,
     include_constants: bool = False,
     corpus_keys: dict | None = None,
+    collapse_schedules: bool = False,
 ) -> TemplateResult:
     """Write a template of src at dest and return what was and wasn't replaced."""
     src, dest = Path(src), Path(dest)
     kinds = kinds or {}
     doc = DocxFile(src)
     paragraphs = doc.paragraphs()
-    hits = detect_document(paragraphs, overrides)
+    hits = detect_document(paragraphs, overrides, doc)
     if corpus_keys:
         from .scan import apply_catalog
 
@@ -134,6 +138,24 @@ def templatize(
         {"reason": reason, "value": mask(skipped_samples[(reason, norm)]), "count": count}
         for (reason, norm), count in sorted(skipped.items(), key=lambda kv: -kv[1])
     ]
+
+    for schedule in find_schedules(doc):
+        collapsed = collapse_schedules and collapse_schedule(schedule)
+        result.schedules.append({
+            "rows": len(schedule["rows"]),
+            "fields": schedule["fields"],
+            "role": schedule["role"],
+            "collapsed": collapsed,
+            "hint": (
+                f"repeats per {schedule['role']}"
+                if collapsed else
+                "one row per party: keep one row and mark it "
+                f"{{{{#each {schedule['role']}}}}}"
+                if schedule["role"] else
+                "rows repeat the same fields, but no party role matches them"
+            ),
+        })
+
     doc.save(dest)
     dest.with_suffix(".fields.json").write_text(
         json.dumps(result.report(), indent=2), encoding="utf-8"
@@ -147,6 +169,7 @@ def templatize_corpus(
     out_root,
     min_confidence: float = DEFAULT_MIN_CONFIDENCE,
     include_constants: bool = False,
+    collapse_schedules: bool = False,
     echo=print,
 ) -> list[TemplateResult]:
     """Templatize a whole folder, recording each template in the database."""
@@ -161,7 +184,7 @@ def templatize_corpus(
     for path in iter_docs(src_root):
         dest = out_root / path.name
         result = templatize(path, dest, kinds, overrides, min_confidence,
-                            include_constants, corpus_keys)
+                            include_constants, corpus_keys, collapse_schedules)
         con.execute(
             "INSERT INTO templates(name, path, source_doc, fields_json, replaced, created_at) "
             "VALUES (?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET path=excluded.path, "
@@ -178,5 +201,7 @@ def templatize_corpus(
             )
             echo(f"  {dest.name}: {result.replaced} placeholders, "
                  f"{len(result.fields_used)} fields, {unresolved} left for review")
+            for schedule in result.schedules:
+                echo(f"      schedule table ({schedule['rows']} rows): {schedule['hint']}")
     con.commit()
     return results

@@ -41,11 +41,32 @@ def _paragraph(spec) -> str:
     return "<w:p>" + "".join(_run(r) for r in runs) + "</w:p>"
 
 
+def _table(rows) -> str:
+    """rows is a list of rows, each a list of cell specs (as for _paragraph)."""
+    out = ["<w:tbl>"]
+    for row in rows:
+        out.append("<w:tr>")
+        for cell in row:
+            out.append("<w:tc><w:tcPr/>" + _paragraph(cell) + "</w:tc>")
+        out.append("</w:tr>")
+    out.append("</w:tbl>")
+    return "".join(out)
+
+
+class Table:
+    """Marks a paragraph spec as a table: build([..., Table(rows), ...])."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+
 def build(path, paragraphs) -> Path:
     """Write a .docx at path whose body is the given paragraph specs."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    body = "".join(_paragraph(p) for p in paragraphs)
+    body = "".join(
+        _table(p.rows) if isinstance(p, Table) else _paragraph(p) for p in paragraphs
+    )
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
         f'<w:document xmlns:w="{W}"><w:body>{body}'

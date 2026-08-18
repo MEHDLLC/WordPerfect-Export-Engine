@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from wpx.minidocx import build  # noqa: E402
+from wpx.minidocx import Table, build  # noqa: E402
 from wpx.values import LONG, format_date, parse_date  # noqa: E402
 
 
@@ -122,7 +122,7 @@ def lor(m, letter_date):
     ]
 
 
-def demand(m, letter_date, medicals, wages, amount, deadline):
+def demand(m, letter_date, medicals, wages, amount, deadline, bills):
     first = m["client"].split()[0]
     return [
         *FIRM,
@@ -133,6 +133,11 @@ def demand(m, letter_date, medicals, wages, amount, deadline):
         f"This letter constitutes a settlement demand on behalf of {m['client']} arising",
         f"from the collision of {m['dol']}, in which your insured, {m['insured']}, failed to yield",
         "and struck our client's vehicle from behind.",
+        "",
+        "MEDICAL SPECIALS",
+        # A schedule of bills: one row per provider, which is what
+        # {{#each provider}} exists for once this becomes a template.
+        Table([["Provider", "Dates of Service", "Amount Billed"], *bills]),
         "",
         "SPECIAL DAMAGES",
         f"Total Medicals:  {medicals}",
@@ -197,7 +202,9 @@ LARKSPUR = dict(name="Larkspur Chiropractic Clinic", attn="Medical Records",
 DOCS = {
     "L LOR Summit Mutual.docx": lambda: lor(MATTER_A, "February 3, 2026"),
     "L Demand Summit Mutual.docx": lambda: demand(
-        MATTER_A, "June 12, 2026", "$18,412.60", "$4,850.00", "$95,000.00", "July 15, 2026"),
+        MATTER_A, "June 12, 2026", "$18,412.60", "$4,850.00", "$95,000.00", "July 15, 2026",
+        [["Valley Regional Medical Center", "01/26/2026 - 03/14/2026", "$12,480.00"],
+         ["Larkspur Chiropractic Clinic", "02/02/2026 - 05/20/2026", "$5,932.60"]]),
     "L Summit Mutual med pay.docx": lambda: med_pay(MATTER_A, "February 10, 2026"),
     "ML Valley Regional.docx": lambda: records_request(
         MATTER_A, VALLEY, "February 10, 2026", "VR-882014"),
@@ -205,7 +212,10 @@ DOCS = {
         MATTER_A, LARKSPUR, "February 10, 2026", "LC-40127"),
     "L LOR Cascade Casualty.docx": lambda: lor(MATTER_B, "March 18, 2026"),
     "L Demand Cascade Casualty.docx": lambda: demand(
-        MATTER_B, "August 4, 2026", "$26,905.14", "$11,200.00", "$140,000.00", "September 5, 2026"),
+        MATTER_B, "August 4, 2026", "$26,905.14", "$11,200.00", "$140,000.00",
+        "September 5, 2026",
+        [["Valley Regional Medical Center", "03/06/2026 - 04/30/2026", "$19,704.14"],
+         ["Summit Physical Therapy", "04/02/2026 - 07/18/2026", "$7,201.00"]]),
     "ML Valley Regional 2.docx": lambda: records_request(
         MATTER_B, VALLEY, "March 20, 2026", "VR-903771"),
 }

@@ -192,6 +192,22 @@ class Paragraph:
         else:
             el.attrib.pop(f"{{{XML_NS}}}space", None)
 
+    def prepend(self, text: str) -> None:
+        """Put text at the very start of the paragraph.
+
+        Used to write an {{#each}} marker into a table row; a replacement
+        cannot do it because there may be nothing there to replace.
+        """
+        for seg in self._segments:
+            if seg.editable:
+                self._set_text(seg.el, text + seg.text)
+                self._segments = self._scan()
+                return
+        run = ET.SubElement(self.el, _w("r"))
+        node = ET.SubElement(run, _w("t"))
+        self._set_text(node, text)
+        self._segments = self._scan()
+
     def replace_all(self, pattern: re.Pattern[str], repl) -> int:
         """Replace every match of pattern; repl(match) returns the new text."""
         edits = [(m.start(), m.end(), repl(m)) for m in pattern.finditer(self.text)]

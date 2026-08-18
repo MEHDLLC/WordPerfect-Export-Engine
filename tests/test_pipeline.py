@@ -29,7 +29,7 @@ class PipelineTest(unittest.TestCase):
         cls.catalog_summary = build_catalog(cls.con)
         cls.templates = cls.tmp / "Templates"
         cls.results = templatize_corpus(
-            cls.con, cls.converted, cls.templates, echo=None
+            cls.con, cls.converted, cls.templates, echo=None, collapse_schedules=True
         )
 
     @classmethod
@@ -83,6 +83,23 @@ class PipelineTest(unittest.TestCase):
         ]
         self.assertEqual(unresolved, [])
 
+    def test_a_frozen_schedule_is_collapsed_into_one_marked_row(self):
+        demand = next(r for r in self.results if "Demand Summit" in r.name)
+        schedules = [s for s in demand.schedules if s["collapsed"]]
+        self.assertEqual(len(schedules), 1)
+        self.assertEqual(schedules[0]["role"], "provider")
+        text = DocxFile(self.templates / demand.name).text
+        self.assertIn("{{#each provider}}", text)
+        self.assertEqual(text.count("{{provider.billed_amount}}"), 1)
+
+    def test_a_schedule_is_reported_even_when_not_collapsed(self):
+        out = self.tmp / "Uncollapsed"
+        results = templatize_corpus(self.con, self.converted, out, echo=None)
+        demand = next(r for r in results if "Demand Summit" in r.name)
+        self.assertEqual(len(demand.schedules), 1)
+        self.assertFalse(demand.schedules[0]["collapsed"])
+        self.assertIn("#each provider", demand.schedules[0]["hint"])
+
     # --- forms ------------------------------------------------------------
     def test_duplicate_letters_collapse_into_one_form(self):
         report = forms.dedupe(self.templates, echo=None)
@@ -116,13 +133,17 @@ class PipelineTest(unittest.TestCase):
              "provider.address": "2500 Palmer-Wasilla Highway",
              "provider.city_state_zip": "Palmer, AK 99645",
              "provider.fax": "(907) 555-0188",
-             "provider.account_no": "VR-991233"},
+             "provider.account_no": "VR-991233",
+             "provider.dates_of_service": "05/14/2026 - 06/30/2026",
+             "provider.billed_amount": "$19,704.14"},
             {"provider.name": "Larkspur Chiropractic Clinic",
              "provider.attn": "Medical Records",
              "provider.address": "781 Bogard Road, Suite B",
              "provider.city_state_zip": "Wasilla, AK 99654",
              "provider.fax": "(907) 555-0170",
-             "provider.account_no": "LC-55810"},
+             "provider.account_no": "LC-55810",
+             "provider.dates_of_service": "05/20/2026 - 08/02/2026",
+             "provider.billed_amount": "$11,500.71"},
         ):
             scope = matters.next_scope(self.con, "2026-9001", "provider")
             matters.set_values(self.con, "2026-9001", provider, scope)
@@ -139,6 +160,12 @@ class PipelineTest(unittest.TestCase):
 
         demand = next(p for p in outdir.glob("*.docx") if "Demand" in p.name)
         text = DocxFile(demand).text
+        # One demand letter, whose schedule carries a row for each provider.
+        self.assertEqual(sum(1 for p in outdir.glob("*.docx") if "Demand" in p.name), 1)
+        self.assertIn("Valley Regional Medical Center", text)
+        self.assertIn("$19,704.14", text)
+        self.assertIn("Larkspur Chiropractic Clinic", text)
+        self.assertIn("$11,500.71", text)
         self.assertIn("Priya N. Raskin", text)
         self.assertIn("AK-5520-11947", text)
         self.assertIn("Priya is prepared to resolve", text)

@@ -120,6 +120,12 @@ FIELDS: tuple[Field, ...] = (
     Field("provider.account_no", "Patient account number", "provider", NUMBER,
           aliases=("account no", "acct no", "patient account no",
                    "patient account number", "mrn", "medical record no")),
+    # Per-provider figures: a bill schedule has one row for each of these.
+    Field("provider.dates_of_service", "Dates of service (this provider)",
+          "provider", TEXT),
+    Field("provider.billed_amount", "Amount billed (this provider)", "provider", MONEY,
+          aliases=("amount billed", "billed amount", "amount", "billed", "charges",
+                   "total charges", "balance")),
 
     # --- money ------------------------------------------------------------
     Field("demand.amount", "Demand amount", "demand", MONEY,

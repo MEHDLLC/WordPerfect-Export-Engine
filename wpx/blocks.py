@@ -17,6 +17,7 @@ import re
 
 from . import fields as F
 from .detect import CSZ_RE, DATE_RE, PHONE_RE, SALUTATION_RE, Hit
+from .docxml import _w
 
 STREET_RE = re.compile(
     r"^\s*(?:\d+\s+\S|P\.?\s?O\.?\s+Box|Post Office Box)", re.IGNORECASE
@@ -231,6 +232,67 @@ def read_addressee(paragraphs) -> list[Hit]:
         if key in F.BY_KEY:
             hits.append(_hit(para, key, 0.75, "addressee"))
     return hits
+
+
+def _cell_paragraphs(cell, index_of):
+    return [index_of[p] for p in cell.iter(_w("p")) if p in index_of]
+
+
+def read_tables(doc, paragraphs) -> list[Hit]:
+    """Map a schedule table's columns using its own header row.
+
+    A demand letter's list of bills is a table headed
+    "Provider | Dates of Service | Amount Billed". The header names each
+    column's field far more reliably than anything the cells themselves could
+    be pattern-matched into, and it is the same alias table the label pass uses.
+    """
+    index_of = {para.el: para for para in paragraphs}
+    hits: list[Hit] = []
+    for root in doc.parts.values():
+        for table in root.iter(_w("tbl")):
+            rows = [r for r in table.iter(_w("tr"))]
+            if len(rows) < 2:
+                continue
+            header, *body = rows
+            columns = _header_fields(header, index_of)
+            if not any(columns):
+                continue
+            columns = _prefer_row_party(columns)
+            for row in body:
+                for cell, key in zip(row.iter(_w("tc")), columns):
+                    if not key:
+                        continue
+                    for para in _cell_paragraphs(cell, index_of):
+                        text = para.text.strip()
+                        if text:
+                            hits.append(_hit(para, key, 0.7, "table"))
+                            break
+    return hits
+
+
+def _header_fields(header, index_of) -> list:
+    keys = []
+    for cell in header.iter(_w("tc")):
+        text = " ".join(p.text.strip() for p in _cell_paragraphs(cell, index_of)).strip()
+        keys.append(F.lookup_label(text) if text else None)
+    return keys
+
+
+def _prefer_row_party(columns: list) -> list:
+    """In a table that names providers, a column belongs to the provider.
+
+    "Dates of Service" resolves to the matter-level field on its own, but one
+    row per provider means the per-provider field is the one that repeats.
+    """
+    if "provider.name" not in columns:
+        return columns
+    out = []
+    for key in columns:
+        if key and not key.startswith("provider."):
+            candidate = "provider." + key.split(".", 1)[1]
+            key = candidate if candidate in F.BY_KEY else key
+        out.append(key)
+    return out
 
 
 def read_blocks(paragraphs) -> list[Hit]:
