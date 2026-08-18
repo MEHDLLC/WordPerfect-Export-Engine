@@ -14,6 +14,8 @@ Requirements (on the Windows processing machine):
     session (not a disconnected RDP session) the first few times so you can
     see whether WP raises any dialogs.
 
+Then continue with the analysis and form-assembly stages:  python3 -m wpx --help
+
 Typical use:
     python wpd_convert.py init --db firmconvert.db
     python wpd_convert.py add  --db firmconvert.db --src "C:\\WPFiles" --recursive
@@ -231,9 +233,12 @@ def cmd_status(args):
 
 def cmd_retry_failed(args):
     con = open_db(args.db)
-    n = con.execute(
-        "UPDATE jobs SET status='queued', error=NULL WHERE status='failed'"
-    ).rowcount
+    # A job whose source file has gone is not worth retrying — it will fail
+    # the same way every time and hide the failures that are still fixable.
+    sql = "UPDATE jobs SET status='queued', error=NULL WHERE status='failed'"
+    if not args.include_missing:
+        sql += " AND COALESCE(error, '') <> 'source file missing'"
+    n = con.execute(sql).rowcount
     con.commit()
     log(con, "INFO", f"retry-failed: re-queued {n} file(s)")
 
@@ -520,29 +525,36 @@ def cmd_run(args):
 # ----------------------------------------------------------------------------
 
 def main():
-    ap = argparse.ArgumentParser(description="Batch WPD -> DOCX via WordPerfect 2021 COM")
-    ap.add_argument("--db", default="firmconvert.db", help="SQLite job database")
+    # --db is attached to every subcommand as well as the top level, so both
+    # "wpd_convert.py --db x add ..." and "wpd_convert.py add --db x ..." work.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--db", default="firmconvert.db", help="SQLite job database")
+
+    ap = argparse.ArgumentParser(
+        description="Batch WPD -> DOCX via WordPerfect 2021 COM", parents=[common])
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("init", help="create the job database")
+    sub.add_parser("init", parents=[common], help="create the job database")
 
-    p = sub.add_parser("add", help="enqueue a file or folder of WP files")
+    p = sub.add_parser("add", parents=[common], help="enqueue a file or folder of WP files")
     p.add_argument("--src", required=True)
     p.add_argument("--recursive", action="store_true")
 
-    p = sub.add_parser("status", help="show queue status and recent failures")
+    p = sub.add_parser("status", parents=[common], help="show queue status and recent failures")
     p.add_argument("--show-failures", type=int, default=10)
 
-    sub.add_parser("retry-failed", help="re-queue all failed jobs")
+    p = sub.add_parser("retry-failed", parents=[common], help="re-queue all failed jobs")
+    p.add_argument("--include-missing", action="store_true",
+                   help="also retry jobs whose source file could not be found")
 
-    p = sub.add_parser("list-constants", help="print WP type library enum constants")
+    p = sub.add_parser("list-constants", parents=[common], help="print WP type library enum constants")
     p.add_argument("--filter", default="FileSave")
 
-    p = sub.add_parser("test-open", help="diagnostic: try COM calls on one file")
+    p = sub.add_parser("test-open", parents=[common], help="diagnostic: try COM calls on one file")
     p.add_argument("--file", required=True)
     p.add_argument("--save-to", help="optionally also attempt a .docx save to this path")
 
-    p = sub.add_parser("run", help="convert queued files")
+    p = sub.add_parser("run", parents=[common], help="convert queued files")
     p.add_argument("--outdir", required=True)
     p.add_argument("--timeout", type=int, default=60, help="seconds per file")
     p.add_argument("--limit", type=int, default=0, help="stop after N files (0 = all)")

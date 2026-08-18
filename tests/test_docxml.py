@@ -1,0 +1,80 @@
+"""The zip/XML layer: editing text without disturbing anything else."""
+
+import unittest
+import zipfile
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from wpx.docxml import DocxFile, ReplacementError
+from wpx.minidocx import build
+
+
+class DocxEditingTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def make(self, paragraphs, name="in.docx"):
+        return build(self.tmp / name, paragraphs)
+
+    def test_reads_text_across_runs(self):
+        path = self.make(["Re: ", ["Dana ", "R. ", "Whitfield"]])
+        self.assertEqual(DocxFile(path).text, "Re: \nDana R. Whitfield")
+
+    def test_replaces_a_value_split_across_runs(self):
+        path = self.make([["Dana ", "R. ", "Whitfield"], "unchanged"])
+        doc = DocxFile(path)
+        doc.paragraphs()[0].apply([(0, 17, "{{client.name}}")])
+        self.assertEqual(doc.text, "{{client.name}}\nunchanged")
+
+    def test_replacement_survives_a_save_reload(self):
+        path = self.make([["Claim No.: ", "AK-4471", "-88203"]])
+        doc = DocxFile(path)
+        doc.paragraphs()[0].apply([(11, 24, "{{insurer.claim_no}}")])
+        out = doc.save(self.tmp / "out.docx")
+        self.assertEqual(DocxFile(out).text, "Claim No.: {{insurer.claim_no}}")
+
+    def test_save_preserves_every_other_zip_entry(self):
+        path = self.make(["hello"])
+        before = set(zipfile.ZipFile(path).namelist())
+        out = DocxFile(path).save(self.tmp / "out.docx")
+        self.assertEqual(set(zipfile.ZipFile(out).namelist()), before)
+
+    def test_leading_whitespace_is_preserved(self):
+        path = self.make(["     indented value"])
+        doc = DocxFile(path)
+        doc.paragraphs()[0].apply([(5, 19, "{{x}}")])
+        out = doc.save(self.tmp / "out.docx")
+        self.assertEqual(DocxFile(out).text, "     {{x}}")
+
+    def test_multiple_edits_in_one_paragraph(self):
+        path = self.make(["A and B"])
+        doc = DocxFile(path)
+        doc.paragraphs()[0].apply([(0, 1, "{{one}}"), (6, 7, "{{two}}")])
+        self.assertEqual(doc.text, "{{one}} and {{two}}")
+
+    def test_overlapping_edits_are_rejected(self):
+        path = self.make(["abcdef"])
+        para = DocxFile(path).paragraphs()[0]
+        with self.assertRaises(ReplacementError):
+            para.apply([(0, 4, "x"), (2, 6, "y")])
+
+    def test_edit_past_the_end_is_rejected(self):
+        path = self.make(["short"])
+        para = DocxFile(path).paragraphs()[0]
+        with self.assertRaises(ReplacementError):
+            para.apply([(0, 99, "x")])
+
+    def test_paragraph_indexes_are_stable_across_reopen(self):
+        path = self.make(["one", "two", "three"])
+        first = [p.index for p in DocxFile(path).paragraphs()]
+        second = [p.index for p in DocxFile(path).paragraphs()]
+        self.assertEqual(first, second)
+        self.assertEqual(first, [0, 1, 2])
+
+
+if __name__ == "__main__":
+    unittest.main()
